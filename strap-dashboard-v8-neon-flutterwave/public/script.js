@@ -140,7 +140,7 @@
       note: 'By continuing, you agree to receive transactional messaging about your account. <a href="#" data-legal="privacy">Privacy Policy</a> &amp; <a href="#" data-legal="terms">Terms</a>', next: 'password' },
     password: { t: 'Set Password', s: 'You’ll verify your email next', f: [{ key: 'password', type: 'password', ph: 'Create a password', ac: 'new-password', meter: 1, v: pwErr }], btn: 'Continue',
       act: () => api.sendCode(D.email, 'signup'), next: 'code', skipVerificationNext: 'verified' },
-    code: { k: 'code', purpose: 'signup', t: 'Code sent to your Email', s: 'If you can’t find the mail, check spam before you resend the code.', next: 'verified' },
+    code: { k: 'code', purpose: 'signup', len: 6, t: 'Code sent to your Email', s: 'We sent a 6 digit code. If you can’t find the email, check spam before resending.', next: 'verified' },
     verified: { k: 'verified', mid: 1, noBack: 1, t: 'Verified', s: 'Ready to set up your business?', next: 'name' },
     name: { t: 'What’s your name?', noBack: 1, f: [{ key: 'name', ph: 'Your full name', ac: 'name', v: v => v.trim().split(/\s+/).filter(Boolean).length < 2 ? 'Enter your first and last name.' : '' }], btn: 'Continue', next: 'dob' },
     dob: { t: 'When were you born?', s: 'You must be 18 or older to set up a business.', f: [{ key: 'dob', type: 'date', ph: '', ac: 'bday', v: dobErr }], btn: 'Continue', next: 'country' },
@@ -290,7 +290,7 @@
   function kVerified(st, body, foot) { const b = pill('Get Started'); b.onclick = () => go(st.next); foot.append(b); }
 
   function kCode(st, body, foot) {
-    const N = st.len || 8, mail = () => D[st.mail || 'email'];
+    const N = st.len || 6, mail = () => D[st.mail || 'email'];
     const g = el('div', 'fg fields'), i = el('input', 'fi code8'), err = el('p', 'ferr'); err.setAttribute('role', 'alert');
     i.inputMode = 'numeric'; i.maxLength = N; i.autocomplete = 'one-time-code'; i.placeholder = `Enter the ${N} digit code`; i.setAttribute('aria-label', `${N} digit code`);
     const tl = el('div', 'tl'), note = el('span'), rs = el('button', '', 'Resend'); rs.type = 'button';
