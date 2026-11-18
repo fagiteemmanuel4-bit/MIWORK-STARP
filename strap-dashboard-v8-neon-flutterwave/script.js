@@ -7,22 +7,51 @@
   /* ===== Live authentication API ===== */
   const api = {
     async signIn(email, password) {
-      try { await window.StrapAPI.request('/api/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }); return { ok: true }; }
-      catch (e) { return { ok: false, msg: e.message }; }
+      try {
+        const { data, error } = await window.StrapNeonAuth.client.signIn.email({ email, password });
+        if (error) throw error;
+        await window.StrapAPI.request('/api/auth/sync', { method: 'POST', body: '{}' });
+        return { ok: true };
+      } catch (e) { return { ok: false, msg: e.message || 'Email or password is incorrect.' }; }
     },
     async sendCode(email, purpose = 'verify') {
-      try { const result = await window.StrapAPI.request('/api/auth/verification/send', { method: 'POST', body: JSON.stringify({ email, purpose }) }); return { ok: true, skipVerification: result.verificationRequired === false }; }
-      catch (e) { return { ok: false, msg: e.message }; }
+      try {
+        const client = window.StrapNeonAuth.client;
+        if (purpose === 'signup' && !D.neonSignupStarted) {
+          const { error } = await client.signUp.email({ email, password: D.password, name: email.split('@')[0] });
+          if (error) throw error;
+          D.neonSignupStarted = true;
+        } else if (purpose === 'signup') {
+          const { error } = await client.emailOtp.sendVerificationOtp({ email, type: 'email-verification' });
+          if (error) throw error;
+        } else if (purpose === 'reset') {
+          const { error } = await client.forgetPassword.emailOtp({ email });
+          if (error) throw error;
+        } else {
+          const { error } = await client.emailOtp.sendVerificationOtp({ email, type: 'email-verification' });
+          if (error) throw error;
+        }
+        return { ok: true };
+      } catch (e) { return { ok: false, msg: e.message || 'Could not send the verification code.' }; }
     },
     async verifyCode(email, code, purpose = 'reset') {
-      try { return await window.StrapAPI.request('/api/auth/verification/verify', { method: 'POST', body: JSON.stringify({ email, code, purpose }) }); }
-      catch (e) { return { ok: false, msg: e.message }; }
+      try {
+        if (purpose === 'reset') {
+          const { data, error } = await window.StrapNeonAuth.client.emailOtp.checkVerificationOtp({ email, otp: code, type: 'forget-password' });
+          if (error) throw error;
+          return { ok: Boolean(data?.success) };
+        }
+        const { data, error } = await window.StrapNeonAuth.client.emailOtp.verifyEmail({ email, otp: code });
+        if (error) throw error;
+        return { ok: true, data };
+      } catch (e) { return { ok: false, msg: e.message || 'The verification code is invalid.' }; }
     },
     async resetPassword(email, code, password) {
       try {
-        await window.StrapAPI.request('/api/auth/password/reset', { method: 'POST', body: JSON.stringify({ email, password }) });
+        const { error } = await window.StrapNeonAuth.client.emailOtp.resetPassword({ email, otp: code, password });
+        if (error) throw error;
         return { ok: true };
-      } catch (e) { return { ok: false, msg: e.message }; }
+      } catch (e) { return { ok: false, msg: e.message || 'Could not reset the password.' }; }
     }
   };
 
@@ -36,8 +65,13 @@
   /* ===== SIGN-UP / BUSINESS SETUP FLOW ===== */
   Object.assign(api, {
     async verifySignupCode(email, code) {
-      try { return await window.StrapAPI.request('/api/auth/verification/verify', { method: 'POST', body: JSON.stringify({ email, code, purpose: 'signup' }) }); }
-      catch (e) { return { ok: false, msg: e.message }; }
+      try {
+        const { error } = await window.StrapNeonAuth.client.emailOtp.verifyEmail({ email, otp: code });
+        if (error) throw error;
+        const { error: signInError } = await window.StrapNeonAuth.client.signIn.email({ email, password: D.password });
+        if (signInError && !String(signInError.message || '').toLowerCase().includes('already')) throw signInError;
+        return { ok: true };
+      } catch (e) { return { ok: false, msg: e.message || 'The verification code is invalid.' }; }
     },
     async createAccount(data) {
       try {
