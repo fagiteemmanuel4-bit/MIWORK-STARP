@@ -36,7 +36,8 @@ const CODE_PEPPER = process.env.CODE_PEPPER || process.env.SESSION_SECRET || 'ch
 const SESSION_SECRET = process.env.SESSION_SECRET || 'development-only-change-this';
 const FLW_SECRET = process.env.FLW_SECRET_KEY || '';
 const FLW_BASE = 'https://api.flutterwave.com/v3';
-const NEON_AUTH_BASE_URL = (process.env.NEON_AUTH_BASE_URL || '').replace(/\\/$/, '');
+const NEON_AUTH_BASE_URL_RAW = process.env.NEON_AUTH_BASE_URL || '';
+const NEON_AUTH_BASE_URL = NEON_AUTH_BASE_URL_RAW.endsWith('/') ? NEON_AUTH_BASE_URL_RAW.slice(0, -1) : NEON_AUTH_BASE_URL_RAW;
 const NEON_AUTH_JWKS_URL = process.env.NEON_AUTH_JWKS_URL || (NEON_AUTH_BASE_URL ? `${NEON_AUTH_BASE_URL}/.well-known/jwks.json` : '');
 let neonJwks;
 
@@ -129,7 +130,8 @@ async function createSession(userId, res) {
   });
 }
 async function getNeonIdentity(req) {
-  const token = String(req.headers.authorization || '').replace(/^Bearer\\s+/i, '');
+  const authorization = String(req.headers.authorization || '');
+  const token = authorization.slice(0, 7).toLowerCase() === 'bearer ' ? authorization.slice(7).trim() : '';
   if (!token || !NEON_AUTH_JWKS_URL || !NEON_AUTH_BASE_URL) return null;
   try {
     neonJwks ||= createRemoteJWKSet(new URL(NEON_AUTH_JWKS_URL));
