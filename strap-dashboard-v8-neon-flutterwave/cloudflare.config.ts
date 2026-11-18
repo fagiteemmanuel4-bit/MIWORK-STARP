@@ -15,9 +15,9 @@ export default defineConfig(({ isPreview }) => ({
     env: {
       HYPERDRIVE: bindings.hyperdrive({ id: "cf43f792e75c41b0adafce60f71ddc3b" }),
       SESSION_SECRET: bindings.secret(),
-      NEON_AUTH_BASE_URL: bindings.secret(),
-      NEON_AUTH_JWKS_URL: bindings.secret(),
-      APP_URL: bindings.text(isPreview ? "https://strap-preview.workers.dev" : "https://strap.workers.dev"),
+      NEON_AUTH_BASE_URL: bindings.text("https://ep-old-night-bdy63bd2.neonauth.c-8.us-east-2.aws.neon.tech/neondb/auth"),
+      NEON_AUTH_JWKS_URL: bindings.text("https://ep-old-night-bdy63bd2.neonauth.c-8.us-east-2.aws.neon.tech/neondb/auth/.well-known/jwks.json"),
+      APP_URL: bindings.text(isPreview ? "https://strap-preview.strap-preview.workers.dev" : "https://strap.strap-preview.workers.dev"),
       DEFAULT_CURRENCY: bindings.text("NGN"),
       NODE_ENV: bindings.text("production"),
       TRUST_PROXY: bindings.text("1")
