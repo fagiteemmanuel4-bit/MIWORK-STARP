@@ -21,7 +21,7 @@ const pool = new Pool({
   idleTimeoutMillis: 30_000,
   connectionTimeoutMillis: 10_000
 });
-const required = ['DATABASE_URL', 'APP_URL', 'SESSION_SECRET', 'FLW_SECRET_KEY'];
+const required = ['DATABASE_URL', 'APP_URL', 'SESSION_SECRET'];
 for (const key of required) if (!process.env[key] || process.env[key].includes('replace_me')) {
   console.warn(`[config] ${key} is not configured; related requests will fail until .env is completed.`);
 }
@@ -40,6 +40,13 @@ app.set('trust proxy', Number(process.env.TRUST_PROXY || 1));
 app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
 app.use(express.json({ limit: '2mb' }));
 app.use(cookieParser());
+// Vercel routes all requests through the Express function so HTML, CSS, JS and API
+// requests are served by the same app root. Strip the internal rewrite prefix early,
+ // before Express route matching and rate-limit middleware.
+app.use((req, _res, next) => {
+  if (req.url.startsWith('/api/_static/')) req.url = req.url.replace(/^\\/api\\/_static/, '') || '/';
+  next();
+});
 app.use(rateLimit({ windowMs: 60_000, limit: 180, standardHeaders: 'draft-7', legacyHeaders: false }));
 app.use('/api/auth', rateLimit({ windowMs: 15 * 60_000, limit: 30, standardHeaders: 'draft-7', legacyHeaders: false }));
 
@@ -149,7 +156,14 @@ function publicUser(user) {
     bizname: user.business_name || '', currency: user.currency || CURRENCY, country: user.country || '' };
 }
 
-app.get('/api/config', (_req, res) => res.json({ ok: true, storeBaseDomain: process.env.STORE_BASE_DOMAIN || '' }));
+const emailDeliveryConfigured = Boolean(process.env.RESEND_API_KEY || process.env.SMTP_HOST);
+app.get('/api/config', (_req, res) => res.json({
+  ok: true,
+  storeBaseDomain: process.env.STORE_BASE_DOMAIN || '',
+  emailVerificationRequired: emailDeliveryConfigured || process.env.EMAIL_VERIFICATION_REQUIRED === 'true',
+  emailDeliveryConfigured,
+  paymentsEnabled: Boolean(FLW_SECRET)
+}));
 app.get('/api/health', asyncRoute(async (_req, res) => {
   await pool.query('SELECT 1');
   res.json({ ok: true, database: 'connected' });
