@@ -11,7 +11,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ENV = globalThis.STRAP_ENV || ENV;
+const ENV = globalThis.STRAP_ENV || process.env;
 const app = express();
 const { Pool } = pg;
 const pool = new Pool({
