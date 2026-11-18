@@ -58,7 +58,21 @@
 </div>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 <script src="api-client.js"></script>
-<script type="module" src="neon-auth.js"></script>
+<script type="module">
+import { createAuthClient } from "https://esm.sh/@neon/auth";
+const authClient = createAuthClient("https://ep-old-night-bdy63bd2.neonauth.c-8.us-east-2.aws.neon.tech/neondb/auth");
+window.StrapNeonAuth = {
+  client: authClient,
+  async getToken() {
+    try {
+      const result = await authClient.token();
+      if (result?.error) return null;
+      return result?.data?.token || null;
+    } catch { return null; }
+  }
+};
+window.dispatchEvent(new Event("strap-neon-auth-ready"));
+</script>
 <script src="picker.js"></script>
 <script src="script.js"></script>
 </body>
