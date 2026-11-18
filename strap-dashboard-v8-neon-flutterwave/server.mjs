@@ -1,4 +1,3 @@
-import 'dotenv/config';
 import express from 'express';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
@@ -7,41 +6,41 @@ import pg from 'pg';
 import bcrypt from 'bcryptjs';
 import crypto from 'node:crypto';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
-import { resolveTxt } from 'node:dns/promises';
 import nodemailer from 'nodemailer';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const ENV = globalThis.STRAP_ENV || ENV;
 const app = express();
 const { Pool } = pg;
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: process.env.DATABASE_SSL === 'false' ? false : { rejectUnauthorized: false },
-  max: Number(process.env.DB_POOL_MAX || 10),
+  connectionString: ENV.HYPERDRIVE?.connectionString || ENV.DATABASE_URL,
+  ssl: ENV.DATABASE_SSL === 'false' ? false : { rejectUnauthorized: false },
+  max: Number(ENV.DB_POOL_MAX || 10),
   idleTimeoutMillis: 30_000,
   connectionTimeoutMillis: 10_000
 });
 const required = ['DATABASE_URL', 'APP_URL', 'SESSION_SECRET'];
-for (const key of required) if (!process.env[key] || process.env[key].includes('replace_me')) {
+for (const key of required) if (!ENV[key] || ENV[key].includes('replace_me')) {
   console.warn(`[config] ${key} is not configured; related requests will fail until .env is completed.`);
 }
-const PORT = Number(process.env.PORT || 3000);
-const APP_URL = (process.env.APP_URL || `http://localhost:${PORT}`).replace(/\/$/, '');
-const COOKIE_NAME = process.env.SESSION_COOKIE_NAME || 'strap_session';
-const SESSION_DAYS = Number(process.env.SESSION_DAYS || 14);
-const CURRENCY = process.env.DEFAULT_CURRENCY || 'NGN';
-const CODE_TTL_MIN = Number(process.env.EMAIL_CODE_TTL_MINUTES || 10);
-const CODE_PEPPER = process.env.CODE_PEPPER || process.env.SESSION_SECRET || 'change-this';
-const SESSION_SECRET = process.env.SESSION_SECRET || 'development-only-change-this';
-const FLW_SECRET = process.env.FLW_SECRET_KEY || '';
+const PORT = Number(ENV.PORT || 3000);
+const APP_URL = (ENV.APP_URL || `http://localhost:${PORT}`).replace(/\/$/, '');
+const COOKIE_NAME = ENV.SESSION_COOKIE_NAME || 'strap_session';
+const SESSION_DAYS = Number(ENV.SESSION_DAYS || 14);
+const CURRENCY = ENV.DEFAULT_CURRENCY || 'NGN';
+const CODE_TTL_MIN = Number(ENV.EMAIL_CODE_TTL_MINUTES || 10);
+const CODE_PEPPER = ENV.CODE_PEPPER || ENV.SESSION_SECRET || 'change-this';
+const SESSION_SECRET = ENV.SESSION_SECRET || 'development-only-change-this';
+const FLW_SECRET = ENV.FLW_SECRET_KEY || '';
 const FLW_BASE = 'https://api.flutterwave.com/v3';
-const NEON_AUTH_BASE_URL_RAW = process.env.NEON_AUTH_BASE_URL || '';
+const NEON_AUTH_BASE_URL_RAW = ENV.NEON_AUTH_BASE_URL || '';
 const NEON_AUTH_BASE_URL = NEON_AUTH_BASE_URL_RAW.endsWith('/') ? NEON_AUTH_BASE_URL_RAW.slice(0, -1) : NEON_AUTH_BASE_URL_RAW;
-const NEON_AUTH_JWKS_URL = process.env.NEON_AUTH_JWKS_URL || (NEON_AUTH_BASE_URL ? `${NEON_AUTH_BASE_URL}/.well-known/jwks.json` : '');
+const NEON_AUTH_JWKS_URL = ENV.NEON_AUTH_JWKS_URL || (NEON_AUTH_BASE_URL ? `${NEON_AUTH_BASE_URL}/.well-known/jwks.json` : '');
 let neonJwks;
 
-app.set('trust proxy', Number(process.env.TRUST_PROXY || 1));
+app.set('trust proxy', Number(ENV.TRUST_PROXY || 1));
 app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
 app.use(express.json({ limit: '2mb' }));
 app.use(cookieParser());
@@ -69,24 +68,24 @@ const asyncRoute = fn => (req, res, next) => Promise.resolve(fn(req, res, next))
 let mailer;
 function getMailer() {
   if (mailer) return mailer;
-  if (process.env.RESEND_API_KEY) return null;
-  if (process.env.SMTP_HOST) {
+  if (ENV.RESEND_API_KEY) return null;
+  if (ENV.SMTP_HOST) {
     mailer = nodemailer.createTransport({
-      host: process.env.SMTP_HOST,
-      port: Number(process.env.SMTP_PORT || 587),
-      secure: String(process.env.SMTP_SECURE || 'false') === 'true',
-      auth: process.env.SMTP_USER ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } : undefined
+      host: ENV.SMTP_HOST,
+      port: Number(ENV.SMTP_PORT || 587),
+      secure: String(ENV.SMTP_SECURE || 'false') === 'true',
+      auth: ENV.SMTP_USER ? { user: ENV.SMTP_USER, pass: ENV.SMTP_PASS } : undefined
     });
     return mailer;
   }
   return null;
 }
 async function sendEmail(to, subject, html, textBody) {
-  const from = process.env.EMAIL_FROM || 'Strap <no-reply@example.com>';
-  if (process.env.RESEND_API_KEY) {
+  const from = ENV.EMAIL_FROM || 'Strap <no-reply@example.com>';
+  if (ENV.RESEND_API_KEY) {
     const response = await fetch('https://api.resend.com/emails', {
       method: 'POST',
-      headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+      headers: { Authorization: `Bearer ${ENV.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ from, to: [to], subject, html, text: textBody })
     });
     if (!response.ok) throw new Error(`Email provider rejected the message (${response.status}).`);
@@ -124,8 +123,8 @@ async function createSession(userId, res) {
   const expires = new Date(Date.now() + SESSION_DAYS * 864e5);
   await pool.query('INSERT INTO sessions(user_id, token_hash, expires_at) VALUES($1,$2,$3)', [userId, hash(token), expires]);
   res.cookie(COOKIE_NAME, token, {
-    ...(process.env.SESSION_COOKIE_DOMAIN ? { domain: process.env.SESSION_COOKIE_DOMAIN } : {}),
-    httpOnly: true, secure: process.env.NODE_ENV === 'production',
+    ...(ENV.SESSION_COOKIE_DOMAIN ? { domain: ENV.SESSION_COOKIE_DOMAIN } : {}),
+    httpOnly: true, secure: ENV.NODE_ENV === 'production',
     sameSite: 'lax', path: '/', expires
   });
 }
@@ -199,7 +198,7 @@ function publicUser(user) {
 
 app.get('/api/config', (_req, res) => res.json({
   ok: true,
-  storeBaseDomain: process.env.STORE_BASE_DOMAIN || '',
+  storeBaseDomain: ENV.STORE_BASE_DOMAIN || '',
   emailVerificationRequired: true,
   emailProvider: 'Neon Auth',
   paymentsEnabled: false,
@@ -214,7 +213,7 @@ app.post('/api/auth/verification/send', asyncRoute(async (req, res) => {
   const email = emailNorm(req.body.email);
   const purpose = ['signup', 'reset', 'verify'].includes(req.body.purpose) ? req.body.purpose : 'verify';
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return fail(res, 400, 'Enter a valid email address.');
-  if (purpose === 'signup' && !emailDeliveryConfigured && process.env.EMAIL_VERIFICATION_REQUIRED !== 'true') {
+  if (purpose === 'signup' && !emailDeliveryConfigured && ENV.EMAIL_VERIFICATION_REQUIRED !== 'true') {
     const exists = await pool.query('SELECT 1 FROM users WHERE email=$1', [email]);
     if (exists.rowCount) return fail(res, 409, 'An account already exists with this email.');
     return res.json({ ok: true, verificationRequired: false });
@@ -307,7 +306,7 @@ app.post('/api/auth/password/reset', asyncRoute(async (req, res) => {
   const result = await pool.query('UPDATE users SET password_hash=$2,updated_at=now() WHERE email=$1 RETURNING id', [email, await bcrypt.hash(password, 12)]);
   if (!result.rowCount) return fail(res, 404, 'No account was found for that email.');
   await pool.query('DELETE FROM sessions WHERE user_id=$1', [result.rows[0].id]);
-  res.clearCookie(COOKIE_NAME, { path: '/', ...(process.env.SESSION_COOKIE_DOMAIN ? { domain: process.env.SESSION_COOKIE_DOMAIN } : {}) });
+  res.clearCookie(COOKIE_NAME, { path: '/', ...(ENV.SESSION_COOKIE_DOMAIN ? { domain: ENV.SESSION_COOKIE_DOMAIN } : {}) });
   res.json({ ok: true });
 }));
 app.post('/api/auth/password/change', auth, asyncRoute(async (req, res) => {
@@ -331,8 +330,13 @@ app.post('/api/storefront/domain/verify', auth, asyncRoute(async (req, res) => {
   if (!host || !token) return fail(res, 400, 'Domain and verification token are required.');
   const expected = `strap-verify=${token}`;
   try {
-    const records = await resolveTxt(`_strap-verify.${host}`);
-    const verified = records.some(parts => parts.join('') === expected);
+    const dnsUrl = new URL("https://cloudflare-dns.com/dns-query");
+    dnsUrl.searchParams.set("name", `_strap-verify.${host}`);
+    dnsUrl.searchParams.set("type", "TXT");
+    const response = await fetch(dnsUrl, { headers: { accept: "application/dns-json" } });
+    if (!response.ok) throw new Error("DNS verification lookup failed");
+    const answer = await response.json();
+    const verified = (answer.Answer || []).some(record => String(record.data || "").replace(/^"|"$/g, "").replace(/"\s*"/g, "") === expected);
     res.json({ ok: true, verified });
   } catch { res.json({ ok: true, verified: false }); }
 }));
@@ -340,7 +344,7 @@ app.get('/api/auth/me', auth, asyncRoute(async (req, res) => res.json({ ok: true
 app.post('/api/auth/logout', auth, asyncRoute(async (req, res) => {
   const token = req.cookies[COOKIE_NAME];
   await pool.query('DELETE FROM sessions WHERE token_hash=$1', [hash(token)]);
-  res.clearCookie(COOKIE_NAME, { path: '/', ...(process.env.SESSION_COOKIE_DOMAIN ? { domain: process.env.SESSION_COOKIE_DOMAIN } : {}) });
+  res.clearCookie(COOKIE_NAME, { path: '/', ...(ENV.SESSION_COOKIE_DOMAIN ? { domain: ENV.SESSION_COOKIE_DOMAIN } : {}) });
   res.json({ ok: true });
 }));
 
@@ -364,7 +368,7 @@ app.delete('/api/account', auth, asyncRoute(async (req, res) => {
     await client.query('BEGIN');
     await client.query('DELETE FROM users WHERE id=$1', [req.user.id]);
     await client.query('COMMIT');
-    res.clearCookie(COOKIE_NAME, { path: '/', ...(process.env.SESSION_COOKIE_DOMAIN ? { domain: process.env.SESSION_COOKIE_DOMAIN } : {}) });
+    res.clearCookie(COOKIE_NAME, { path: '/', ...(ENV.SESSION_COOKIE_DOMAIN ? { domain: ENV.SESSION_COOKIE_DOMAIN } : {}) });
     res.json({ ok: true });
   } catch (e) { await client.query('ROLLBACK'); throw e; }
   finally { client.release(); }
@@ -405,7 +409,7 @@ app.post('/api/payments/verify', auth, asyncRoute(async (req, res) => {
 
 app.post('/api/webhooks/flutterwave', asyncRoute(async (req, res) => {
   const signature = req.headers['verif-hash'];
-  if (!process.env.FLW_WEBHOOK_SECRET_HASH || !safeEqual(signature || '', process.env.FLW_WEBHOOK_SECRET_HASH)) return fail(res, 401, 'Invalid webhook signature.');
+  if (!ENV.FLW_WEBHOOK_SECRET_HASH || !safeEqual(signature || '', ENV.FLW_WEBHOOK_SECRET_HASH)) return fail(res, 401, 'Invalid webhook signature.');
   const data = req.body?.data || {};
   if (data.tx_ref) {
     const payment = await pool.query('SELECT * FROM payments WHERE tx_ref=$1', [data.tx_ref]);
@@ -424,12 +428,14 @@ app.use((req, res, next) => {
   if (/(^|\/)(?:server\.mjs|package\.json|README\.md|\.env(?:\..*)?|\.git)(?:\/|$)/i.test(req.path) || /\.(?:sql|md)$/i.test(req.path)) return res.sendStatus(404);
   next();
 });
-app.use(express.static(__dirname, { extensions: ['html'], dotfiles: 'deny' }));
-app.get('*', (_req, res) => res.sendFile(path.join(__dirname, 'index.html')));
+if (ENV.STRAP_WORKERS !== 'true') {
+  app.use(express.static(__dirname, { extensions: ['html'], dotfiles: 'deny' }));
+  app.get('*', (_req, res) => res.sendFile(path.join(__dirname, 'index.html')));
+}
 app.use((err, _req, res, _next) => {
   console.error(err);
-  res.status(500).json({ ok: false, message: process.env.NODE_ENV === 'production' ? 'Something went wrong. Please try again.' : err.message });
+  res.status(500).json({ ok: false, message: ENV.NODE_ENV === 'production' ? 'Something went wrong. Please try again.' : err.message });
 });
-if (!process.env.VERCEL) app.listen(PORT, () => console.log(`Strap server listening on ${APP_URL}`));
+if (!ENV.VERCEL) app.listen(PORT, () => console.log(`Strap server listening on ${APP_URL}`));
 
 export default app;
