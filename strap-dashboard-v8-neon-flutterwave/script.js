@@ -238,8 +238,8 @@
       if (st.act) {
         lock(btn, true); const r = await st.act(); lock(btn, false);
         if (!r.ok) { gerr.textContent = r.msg || 'Something went wrong. Try again.'; return; }
+        if (r.skipVerification && st.skipVerificationNext) { go(st.skipVerificationNext); return; }
       }
-      if (st.act) { /* handled above */ }
       go(nxt(st));
     };
     foot.append(btn);
