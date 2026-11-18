@@ -2,7 +2,8 @@
 (() => {
   const state = { user: null, data: {}, config: {}, ready: null };
   const request = async (url, options = {}) => {
-    const authToken = await window.StrapNeonAuth?.getToken?.().catch(() => null);
+    let authToken = null;
+    try { authToken = await window.StrapNeonAuth?.getToken?.(); } catch { authToken = null; }
     const response = await fetch(url, {
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json', ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}), ...(options.headers || {}) },
