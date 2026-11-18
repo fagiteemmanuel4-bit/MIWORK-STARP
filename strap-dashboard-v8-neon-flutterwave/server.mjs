@@ -44,7 +44,7 @@ app.use(cookieParser());
 // requests are served by the same app root. Strip the internal rewrite prefix early,
  // before Express route matching and rate-limit middleware.
 app.use((req, _res, next) => {
-  if (req.url.startsWith('/api/_static/')) req.url = req.url.replace(/^\\/api\\/_static/, '') || '/';
+  if (req.url.startsWith('/api/_static/')) req.url = req.url.slice('/api/_static'.length) || '/';
   next();
 });
 app.use(rateLimit({ windowMs: 60_000, limit: 180, standardHeaders: 'draft-7', legacyHeaders: false }));
@@ -173,12 +173,18 @@ app.post('/api/auth/verification/send', asyncRoute(async (req, res) => {
   const email = emailNorm(req.body.email);
   const purpose = ['signup', 'reset', 'verify'].includes(req.body.purpose) ? req.body.purpose : 'verify';
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return fail(res, 400, 'Enter a valid email address.');
+  if (purpose === 'signup' && !emailDeliveryConfigured && process.env.EMAIL_VERIFICATION_REQUIRED !== 'true') {
+    const exists = await pool.query('SELECT 1 FROM users WHERE email=$1', [email]);
+    if (exists.rowCount) return fail(res, 409, 'An account already exists with this email.');
+    return res.json({ ok: true, verificationRequired: false });
+  }
+  if (!emailDeliveryConfigured) return fail(res, 503, 'Email delivery is not configured yet. Please contact support.');
   if (purpose === 'signup') {
     const exists = await pool.query('SELECT 1 FROM users WHERE email=$1', [email]);
     if (exists.rowCount) return fail(res, 409, 'An account already exists with this email.');
   }
   await issueCode(email, purpose, purpose === 'signup' ? 8 : 6);
-  res.json({ ok: true });
+  res.json({ ok: true, verificationRequired: true });
 }));
 app.post('/api/auth/verification/verify', asyncRoute(async (req, res) => {
   const email = emailNorm(req.body.email), purpose = ['signup', 'reset', 'verify'].includes(req.body.purpose) ? req.body.purpose : 'verify';
@@ -201,9 +207,11 @@ app.post('/api/auth/register', asyncRoute(async (req, res) => {
     const b = await pool.query('SELECT name,currency,country FROM businesses WHERE owner_id=$1 AND is_default=true LIMIT 1', [existing.id]);
     return res.json({ ok: true, user: publicUser({ ...existing, business_name: b.rows[0]?.name, currency: b.rows[0]?.currency, country: b.rows[0]?.country }) });
   }
-  const verified = await pool.query(
-    `SELECT 1 FROM email_verifications WHERE email=$1 AND purpose='signup' AND verified_at > now() - interval '20 minutes' ORDER BY verified_at DESC LIMIT 1`, [email]
-  );
+  const verified = emailDeliveryConfigured || process.env.EMAIL_VERIFICATION_REQUIRED === 'true'
+    ? await pool.query(
+      `SELECT 1 FROM email_verifications WHERE email=$1 AND purpose='signup' AND verified_at > now() - interval '20 minutes' ORDER BY verified_at DESC LIMIT 1`, [email]
+    )
+    : { rowCount: 1 };
   if (!verified.rowCount) return fail(res, 400, 'Verify your email address before creating an account.');
   const client = await pool.connect();
   try {
