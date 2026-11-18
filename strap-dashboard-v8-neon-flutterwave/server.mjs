@@ -381,4 +381,6 @@ app.use((err, _req, res, _next) => {
   console.error(err);
   res.status(500).json({ ok: false, message: process.env.NODE_ENV === 'production' ? 'Something went wrong. Please try again.' : err.message });
 });
-app.listen(PORT, () => console.log(`Strap server listening on ${APP_URL}`));
+if (!process.env.VERCEL) app.listen(PORT, () => console.log(`Strap server listening on ${APP_URL}`));
+
+export default app;
