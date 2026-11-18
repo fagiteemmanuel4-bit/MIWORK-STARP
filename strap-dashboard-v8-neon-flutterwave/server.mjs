@@ -145,7 +145,6 @@ async function neonIdentity(req, res, next) {
   try {
     const identity = await getNeonIdentity(req);
     if (!identity) return fail(res, 401, 'Your Neon Auth session is invalid. Please sign in again.');
-    if (!identity.emailVerified) return fail(res, 403, 'Verify your email address before continuing.');
     req.neonIdentity = identity;
     next();
   } catch (error) { next(error); }
