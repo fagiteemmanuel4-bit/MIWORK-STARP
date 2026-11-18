@@ -11,7 +11,7 @@
       catch (e) { return { ok: false, msg: e.message }; }
     },
     async sendCode(email, purpose = 'verify') {
-      try { await window.StrapAPI.request('/api/auth/verification/send', { method: 'POST', body: JSON.stringify({ email, purpose }) }); return { ok: true }; }
+      try { const result = await window.StrapAPI.request('/api/auth/verification/send', { method: 'POST', body: JSON.stringify({ email, purpose }) }); return { ok: true, skipVerification: result.verificationRequired === false }; }
       catch (e) { return { ok: false, msg: e.message }; }
     },
     async verifyCode(email, code, purpose = 'reset') {
@@ -105,7 +105,7 @@
     email: { t: 'Enter your email address', s: 'We’ll send you a verification code', f: [{ key: 'email', type: 'email', ph: 'example@email.com', ac: 'email', v: emailError }], btn: 'Continue',
       note: 'By continuing, you agree to receive transactional messaging about your account. <a href="#" data-legal="privacy">Privacy Policy</a> &amp; <a href="#" data-legal="terms">Terms</a>', next: 'password' },
     password: { t: 'Set Password', s: 'You’ll verify your email next', f: [{ key: 'password', type: 'password', ph: 'Create a password', ac: 'new-password', meter: 1, v: pwErr }], btn: 'Continue',
-      act: () => api.sendCode(D.email, 'signup'), next: 'code' },
+      act: () => api.sendCode(D.email, 'signup'), next: 'code', skipVerificationNext: 'verified' },
     code: { k: 'code', purpose: 'signup', t: 'Code sent to your Email', s: 'If you can’t find the mail, check spam before you resend the code.', next: 'verified' },
     verified: { k: 'verified', mid: 1, noBack: 1, t: 'Verified', s: 'Ready to set up your business?', next: 'name' },
     name: { t: 'What’s your name?', noBack: 1, f: [{ key: 'name', ph: 'Your full name', ac: 'name', v: v => v.trim().split(/\s+/).filter(Boolean).length < 2 ? 'Enter your first and last name.' : '' }], btn: 'Continue', next: 'dob' },
