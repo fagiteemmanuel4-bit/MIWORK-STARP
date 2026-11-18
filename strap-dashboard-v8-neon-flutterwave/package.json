@@ -6,7 +6,10 @@
   "scripts": {
     "start": "node server.mjs",
     "dev": "node --watch server.mjs",
-    "check": "node --check server.mjs"
+    "check": "node --check server.mjs",
+    "cf:dev": "cf dev",
+    "cf:build": "cf build",
+    "cf:preview": "cf previews deploy"
   },
   "engines": {
     "node": "22.x"
@@ -19,8 +22,11 @@
     "express-rate-limit": "^7.5.0",
     "helmet": "^8.0.0",
     "nodemailer": "^10.6.0",
-    "pg": "^8.13.1",
+    "pg": "^8.16.3",
     "jose": "^6.1.0",
     "@neondatabase/auth": "0.7.0-beta"
+  },
+  "devDependencies": {
+    "cf": "^1.0.0-rc.1"
   }
 }
