@@ -39,10 +39,16 @@ window.StrapNeonAuth = {
   client: authClient,
   async getToken() {
     try {
-      return await authClient.getJWTToken();
+      if (typeof authClient.token === "function") {
+        const result = await authClient.token();
+        if (result?.error) throw result.error;
+        return result?.data?.token || null;
+      }
+      if (typeof authClient.getJWTToken === "function") return await authClient.getJWTToken();
+      throw new Error("This Neon Auth client does not expose token().");
     } catch (error) {
       console.error("Neon Auth session token unavailable:", error);
-      return null;
+      throw error;
     }
   }
 };
