@@ -6,6 +6,7 @@ import rateLimit from 'express-rate-limit';
 import pg from 'pg';
 import bcrypt from 'bcryptjs';
 import crypto from 'node:crypto';
+import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { resolveTxt } from 'node:dns/promises';
 import nodemailer from 'nodemailer';
 import path from 'node:path';
@@ -35,6 +36,9 @@ const CODE_PEPPER = process.env.CODE_PEPPER || process.env.SESSION_SECRET || 'ch
 const SESSION_SECRET = process.env.SESSION_SECRET || 'development-only-change-this';
 const FLW_SECRET = process.env.FLW_SECRET_KEY || '';
 const FLW_BASE = 'https://api.flutterwave.com/v3';
+const NEON_AUTH_BASE_URL = (process.env.NEON_AUTH_BASE_URL || '').replace(/\\/$/, '');
+const NEON_AUTH_JWKS_URL = process.env.NEON_AUTH_JWKS_URL || (NEON_AUTH_BASE_URL ? `${NEON_AUTH_BASE_URL}/.well-known/jwks.json` : '');
+let neonJwks;
 
 app.set('trust proxy', Number(process.env.TRUST_PROXY || 1));
 app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
@@ -124,8 +128,44 @@ async function createSession(userId, res) {
     sameSite: 'lax', path: '/', expires
   });
 }
+async function getNeonIdentity(req) {
+  const token = String(req.headers.authorization || '').replace(/^Bearer\\s+/i, '');
+  if (!token || !NEON_AUTH_JWKS_URL || !NEON_AUTH_BASE_URL) return null;
+  try {
+    neonJwks ||= createRemoteJWKSet(new URL(NEON_AUTH_JWKS_URL));
+    const { payload } = await jwtVerify(token, neonJwks, { issuer: NEON_AUTH_BASE_URL });
+    if (!payload.sub || !payload.email) return null;
+    return { id: String(payload.sub), email: emailNorm(payload.email), emailVerified: payload.email_verified === true || payload.emailVerified === true };
+  } catch (error) {
+    console.warn('[auth] Neon token rejected:', error.code || error.message);
+    return null;
+  }
+}
+async function neonIdentity(req, res, next) {
+  try {
+    const identity = await getNeonIdentity(req);
+    if (!identity) return fail(res, 401, 'Your Neon Auth session is invalid. Please sign in again.');
+    if (!identity.emailVerified) return fail(res, 403, 'Verify your email address before continuing.');
+    req.neonIdentity = identity;
+    next();
+  } catch (error) { next(error); }
+}
 async function auth(req, res, next) {
   try {
+    const identity = await getNeonIdentity(req);
+    if (identity) {
+      const result = await pool.query(
+        `SELECT u.id,u.email,u.full_name,u.photo_url,u.created_at,
+                b.id AS business_id,b.name AS business_name,b.currency,b.country,b.plan
+         FROM users u LEFT JOIN businesses b ON b.owner_id=u.id AND b.is_default=true
+         WHERE (u.neon_auth_user_id=$1 OR u.email=$2) AND u.disabled_at IS NULL LIMIT 1`,
+        [identity.id, identity.email]
+      );
+      if (result.rowCount) {
+        req.user = result.rows[0];
+        return next();
+      }
+    }
     const token = req.cookies[COOKIE_NAME];
     if (!token) return fail(res, 401, 'Please sign in.');
     const result = await pool.query(
@@ -156,13 +196,13 @@ function publicUser(user) {
     bizname: user.business_name || '', currency: user.currency || CURRENCY, country: user.country || '' };
 }
 
-const emailDeliveryConfigured = Boolean(process.env.RESEND_API_KEY || process.env.SMTP_HOST);
 app.get('/api/config', (_req, res) => res.json({
   ok: true,
   storeBaseDomain: process.env.STORE_BASE_DOMAIN || '',
-  emailVerificationRequired: emailDeliveryConfigured || process.env.EMAIL_VERIFICATION_REQUIRED === 'true',
-  emailDeliveryConfigured,
-  paymentsEnabled: Boolean(FLW_SECRET)
+  emailVerificationRequired: true,
+  emailProvider: 'Neon Auth',
+  paymentsEnabled: false,
+  paymentsComingSoon: true
 }));
 app.get('/api/health', asyncRoute(async (_req, res) => {
   await pool.query('SELECT 1');
@@ -193,54 +233,59 @@ app.post('/api/auth/verification/verify', asyncRoute(async (req, res) => {
   const ok = await verifyCode(email, purpose, code);
   res.json({ ok });
 }));
-app.post('/api/auth/register', asyncRoute(async (req, res) => {
-  const email = emailNorm(req.body.email), password = String(req.body.password || '');
+app.post('/api/auth/register', neonIdentity, asyncRoute(async (req, res) => {
+  const email = req.neonIdentity.email;
   const name = cleanText(req.body.name, 120), bizname = cleanText(req.body.bizname, 140);
-  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return fail(res, 400, 'A valid email is required.');
-  if (password.length < 10) return fail(res, 400, 'Use a password with at least 10 characters.');
   if (!name || !bizname) return fail(res, 400, 'Your name and business name are required.');
-  const existingUser = await pool.query('SELECT id,password_hash,full_name,photo_url FROM users WHERE email=$1', [email]);
-  if (existingUser.rowCount) {
-    const existing = existingUser.rows[0];
-    if (!(await bcrypt.compare(password, existing.password_hash))) return fail(res, 409, 'An account already exists with this email. Please sign in.');
-    await createSession(existing.id, res);
-    const b = await pool.query('SELECT name,currency,country FROM businesses WHERE owner_id=$1 AND is_default=true LIMIT 1', [existing.id]);
-    return res.json({ ok: true, user: publicUser({ ...existing, business_name: b.rows[0]?.name, currency: b.rows[0]?.currency, country: b.rows[0]?.country }) });
-  }
-  const verified = emailDeliveryConfigured || process.env.EMAIL_VERIFICATION_REQUIRED === 'true'
-    ? await pool.query(
-      `SELECT 1 FROM email_verifications WHERE email=$1 AND purpose='signup' AND verified_at > now() - interval '20 minutes' ORDER BY verified_at DESC LIMIT 1`, [email]
-    )
-    : { rowCount: 1 };
-  if (!verified.rowCount) return fail(res, 400, 'Verify your email address before creating an account.');
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const passwordHash = await bcrypt.hash(password, 12);
-    const userResult = await client.query(
-      'INSERT INTO users(email,password_hash,full_name,photo_url) VALUES($1,$2,$3,$4) RETURNING id,email,full_name,photo_url,created_at',
-      [email, passwordHash, name, req.body.photoUrl || null]
-    );
-    const user = userResult.rows[0];
+    let found = await client.query('SELECT id,email,full_name,photo_url FROM users WHERE neon_auth_user_id=$1 OR email=$2 LIMIT 1', [req.neonIdentity.id, email]);
+    let user;
+    if (found.rowCount) {
+      const updated = await client.query(
+        'UPDATE users SET neon_auth_user_id=$2,full_name=$3,photo_url=COALESCE($4,photo_url),updated_at=now() WHERE id=$1 RETURNING id,email,full_name,photo_url,created_at',
+        [found.rows[0].id, req.neonIdentity.id, name, req.body.photoUrl || null]
+      );
+      user = updated.rows[0];
+    } else {
+      const passwordHash = await bcrypt.hash(randomToken(), 12);
+      const inserted = await client.query(
+        'INSERT INTO users(email,password_hash,full_name,photo_url,neon_auth_user_id) VALUES($1,$2,$3,$4,$5) RETURNING id,email,full_name,photo_url,created_at',
+        [email, passwordHash, name, req.body.photoUrl || null, req.neonIdentity.id]
+      );
+      user = inserted.rows[0];
+    }
     const profile = {};
     for (const key of ['dob','country','registered','regno','mode','branches','bcountry','state','city','street','landmark','postcode','hasSite','site','wantSite','currency']) {
       if (req.body[key] !== undefined) profile[key] = req.body[key];
     }
     await client.query(
       `INSERT INTO businesses(owner_id,name,currency,country,plan,is_default,profile)
-       VALUES($1,$2,$3,$4,'free',true,$5::jsonb)`,
-      [user.id, bizname, cleanText(req.body.currency || CURRENCY, 8), cleanText(req.body.bcountry || req.body.country, 80),
-       JSON.stringify(profile)]
+       VALUES($1,$2,$3,$4,'free',true,$5::jsonb)
+       ON CONFLICT (owner_id) WHERE is_default=true DO UPDATE SET name=EXCLUDED.name,currency=EXCLUDED.currency,country=EXCLUDED.country,profile=EXCLUDED.profile,updated_at=now()`,
+      [user.id, bizname, cleanText(req.body.currency || CURRENCY, 8), cleanText(req.body.bcountry || req.body.country, 80), JSON.stringify(profile)]
     );
-    await client.query('INSERT INTO account_data(user_id,data) VALUES($1,$2::jsonb)', [user.id, JSON.stringify({})]);
+    await client.query('INSERT INTO account_data(user_id,data) VALUES($1,$2::jsonb) ON CONFLICT(user_id) DO NOTHING', [user.id, JSON.stringify({})]);
     await client.query('COMMIT');
     await createSession(user.id, res);
-    res.status(201).json({ ok: true, user: { ...user, business_name: bizname, currency: req.body.currency || CURRENCY } });
-  } catch (e) {
+    const b = await pool.query('SELECT name,currency,country FROM businesses WHERE owner_id=$1 AND is_default=true LIMIT 1', [user.id]);
+    res.status(found.rowCount ? 200 : 201).json({ ok: true, user: publicUser({ ...user, business_name: b.rows[0]?.name, currency: b.rows[0]?.currency, country: b.rows[0]?.country }) });
+  } catch (error) {
     await client.query('ROLLBACK');
-    if (e.code === '23505') return fail(res, 409, 'An account already exists with this email.');
-    throw e;
+    if (error.code === '23505') return fail(res, 409, 'An account already exists with this email.');
+    throw error;
   } finally { client.release(); }
+}));
+app.post('/api/auth/sync', neonIdentity, asyncRoute(async (req, res) => {
+  const result = await pool.query(
+    'SELECT u.id,u.email,u.full_name,u.photo_url,u.created_at,b.name AS business_name,b.currency,b.country FROM users u LEFT JOIN businesses b ON b.owner_id=u.id AND b.is_default=true WHERE u.neon_auth_user_id=$1 OR u.email=$2 LIMIT 1',
+    [req.neonIdentity.id, req.neonIdentity.email]
+  );
+  if (!result.rowCount) return fail(res, 404, 'Your email is verified, but your Strap workspace setup is incomplete. Please finish creating your workspace.');
+  await pool.query('UPDATE users SET neon_auth_user_id=$2 WHERE id=$1 AND neon_auth_user_id IS DISTINCT FROM $2', [result.rows[0].id, req.neonIdentity.id]);
+  await createSession(result.rows[0].id, res);
+  res.json({ ok: true, user: publicUser(result.rows[0]) });
 }));
 app.post('/api/auth/login', asyncRoute(async (req, res) => {
   const email = emailNorm(req.body.email), password = String(req.body.password || '');
@@ -330,26 +375,7 @@ app.patch('/api/account/business', auth, asyncRoute(async (req, res) => {
   res.json({ ok: true });
 }));
 
-app.post('/api/payments/initialize', auth, asyncRoute(async (req, res) => {
-  if (!FLW_SECRET) return fail(res, 503, 'Flutterwave is not configured. Add FLW_SECRET_KEY to .env.');
-  const amount = Number(req.body.amount);
-  const currency = cleanText(req.body.currency || req.user.currency || CURRENCY, 8);
-  if (!Number.isFinite(amount) || amount <= 0) return fail(res, 400, 'Invalid payment amount.');
-  const txRef = `STRAP-${req.user.id}-${crypto.randomUUID()}`;
-  await pool.query(
-    `INSERT INTO payments(user_id,tx_ref,amount,currency,status,purpose) VALUES($1,$2,$3,$4,'pending','subscription')`,
-    [req.user.id, txRef, amount, currency]
-  );
-  const result = await flutterwave('/payments', {
-    tx_ref: txRef, amount, currency, redirect_url: `${APP_URL}/dashboard.html?payment=verify`,
-    customer: { email: req.user.email, name: req.user.full_name },
-    ...(process.env.FLW_PAYMENT_PLAN_ID ? { payment_plan: Number(process.env.FLW_PAYMENT_PLAN_ID) } : {}),
-    customizations: { title: process.env.FLW_BUSINESS_NAME || 'Strap', description: 'Strap subscription' },
-    meta: { user_id: req.user.id, purpose: 'subscription' }
-  });
-  if (!result.data?.link) throw new Error('Flutterwave did not return a checkout link.');
-  res.json({ ok: true, checkoutUrl: result.data.link, txRef });
-}));
+app.post('/api/payments/initialize', auth, (_req, res) => fail(res, 503, 'Payments are coming soon. You can use Strap’s free workspace in the meantime.'));
 app.post('/api/payments/verify', auth, asyncRoute(async (req, res) => {
   const txRef = cleanText(req.body.txRef, 180);
   const local = await pool.query('SELECT * FROM payments WHERE tx_ref=$1 AND user_id=$2', [txRef, req.user.id]);
