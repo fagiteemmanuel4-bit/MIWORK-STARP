@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash text NOT NULL,
   full_name text NOT NULL,
   photo_url text,
+  neon_auth_user_id text UNIQUE,
   disabled_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
