@@ -340,25 +340,11 @@
     PLAN.features.forEach(f => list.append(el('li', '', f))); inner.append(list); bx.append(inner); bx.inert = true;
     head.onclick = () => { const open = !acc.classList.contains('open'); acc.classList.toggle('open', open); head.setAttribute('aria-expanded', String(open)); bx.inert = !open; };
     if (st.open) { acc.classList.add('open'); head.setAttribute('aria-expanded', 'true'); bx.inert = false; }
-    const card = el('div', 'paycard'), gerr = el('p', 'ferr'), btn = pill('Continue to secure payment');
-    gerr.setAttribute('role', 'alert'); btn.type = 'button';
-    btn.onclick = async () => {
-      lock(btn, true, 'Preparing secure checkout…');
-      try {
-        // Create the Neon account before checkout so the payment is linked to a real user.
-        const account = await api.createAccount(D);
-        if (!account.ok) { gerr.textContent = account.msg || 'We could not create your account.'; lock(btn, false); return; }
-        const result = await api.subscribe({ amount: PLAN.intro });
-        if (!result.ok) { gerr.textContent = result.msg || 'Could not start payment.'; lock(btn, false); return; }
-        location.href = result.checkoutUrl;
-      } catch (e) { gerr.textContent = e.message; lock(btn, false); }
-    };
-    card.append(el('div', 'cardh', 'Secure payment'), el('p', 'note', 'You’ll complete payment on Flutterwave. Strap never receives or stores your card number, expiry date or CVV.'), gerr, btn,
-      el('p', 'note', `Subscription amount: ${ngn(PLAN.intro)}. Cancel anytime.`),
-      el('p', 'note', 'Payments powered by Flutterwave'));
-    body.append(acc, card);
+    const card = el('div', 'paycard');
+    card.append(el('div', 'cardh', 'Premium subscriptions'), el('p', 'note', 'Payments are coming soon. You can create your free Strap workspace and explore the app while we finish subscriptions.'));
+    const btn = pill('Payments coming soon', 'alt'); btn.disabled = true; btn.setAttribute('aria-disabled', 'true');
+    body.append(acc, card); foot.append(btn);
   }
-
   // animated success: ring and tick draw themselves, sparks burst, then we move on (button or automatically)
   function kSuccess(st, body, foot) {
     if (st.before) st.before();
