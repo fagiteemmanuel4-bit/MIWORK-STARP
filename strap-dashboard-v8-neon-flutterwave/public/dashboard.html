@@ -31,7 +31,24 @@
   </div>
 </div>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
-<script src="api-client.js"></script>\n<script src="picker.js"></script>
+<script src="api-client.js"></script>
+<script type="module">
+import { createAuthClient } from "https://esm.sh/@neondatabase/auth@0.7.0-beta?bundle";
+const authClient = createAuthClient("https://ep-old-night-bdy63bd2.neonauth.c-8.us-east-2.aws.neon.tech/neondb/auth");
+window.StrapNeonAuth = {
+  client: authClient,
+  async getToken() {
+    try {
+      return await authClient.getJWTToken();
+    } catch (error) {
+      console.error("Neon Auth session token unavailable:", error);
+      return null;
+    }
+  }
+};
+window.dispatchEvent(new Event("strap-neon-auth-ready"));
+</script>
+<script src="picker.js"></script>
 <script src="ui.js"></script>
 <script src="store.js"></script>
 <script src="kit.js"></script>
@@ -47,5 +64,6 @@
 <script src="onlinestore.js"></script>
 <script src="pages.js"></script>
 <script src="dashboard.js"></script>
+<!-- Neon Auth production bootstrap: @neondatabase/auth@0.7.0-beta -->
 </body>
 </html>
