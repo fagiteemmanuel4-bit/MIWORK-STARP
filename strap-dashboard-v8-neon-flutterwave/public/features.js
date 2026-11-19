@@ -304,7 +304,7 @@ window.StrapFeatures = (() => {
         foot: pill('Save team member', 'data-fin') });
       $('[data-fin]', o.el).onclick = async () => {
         const email = $('#se', o.el).value.trim().toLowerCase();
-        if (email && !/^[^\\s@]+@[^\\s@]+\\.[^\\s@]{2,}$/.test(email)) return ferr($('#se', o.el), 'Enter a valid email address.');
+        if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) return ferr($('#se', o.el), 'Enter a valid email address.');
         const st = { id: 's' + Date.now().toString(36), name: A.name, role: A.role, branch: A.branch, email, at: Date.now() };
         const btn = $('[data-fin]', o.el); btn.disabled = true;
         try {
