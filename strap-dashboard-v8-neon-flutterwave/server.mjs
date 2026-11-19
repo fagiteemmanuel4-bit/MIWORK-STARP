@@ -426,22 +426,48 @@ function publicStoreMarkup(config, products, slug, product) {
 }
 function renderPublicStorePage(slug, config, products, product) {
   const storeName = cleanText(config.name || 'Online store', 140);
-  const productTitle = product ? cleanText(product.seo?.title || product.title, 180) : storeName;
-  const title = product ? productTitle + ' | ' + storeName : storeName + ' | Online store';
-  const description = seoDescription(product?.seo?.description || product?.description || config.tagline || ('Shop ' + storeName + ' online. Browse products and place an order.'));
+  const seo = config.seo && typeof config.seo === 'object' ? config.seo : {};
+  const productTitle = product ? cleanText(product.seo?.title || product.title, 180) : cleanText(seo.title || storeName, 180);
+  const title = product ? productTitle + ' | ' + storeName : productTitle + ' | Online store';
+  const description = seoDescription(product?.seo?.description || product?.description || seo.description || config.tagline || ('Shop ' + storeName + ' online. Browse products and place an order.'));
   const canonical = product ? productCanonical(slug, product) : APP_URL + '/store/' + encodeURIComponent(slug);
   const image = safeStoreImage(product?.image || products.find(p => safeStoreImage(p.image))?.image || '');
-  const productLd = product ? { '@context':'https://schema.org', '@type':'Product', name:product.title, description, image:image?[image]:undefined, sku:product.sku || undefined, offers:{ '@type':'Offer', priceCurrency:config.currency || CURRENCY, price:String(Math.max(0,Number(product.price)||0)), availability:product.tracked && Number(product.qty||0)<=0 ? 'https://schema.org/OutOfStock' : 'https://schema.org/InStock', url:canonical } } : null;
-  const storeLd = { '@context':'https://schema.org', '@type':'OnlineStore', name:storeName, url:APP_URL + '/store/' + encodeURIComponent(slug), description };
-  const jsonld = JSON.stringify(productLd || storeLd).replace(/</g,'\\u003c');
+  const productLd = product ? {
+    '@context':'https://schema.org', '@type':'Product', name:product.title, description,
+    image:image?[image]:undefined, sku:product.sku || undefined,
+    offers:{
+      '@type':'Offer', priceCurrency:config.currency || CURRENCY,
+      price:String(Math.max(0,Number(product.price)||0)),
+      availability:product.tracked && Number(product.qty||0)<=0 ? 'https://schema.org/OutOfStock' : 'https://schema.org/InStock',
+      url:canonical
+    }
+  } : null;
+  const storeLd = {
+    '@context':'https://schema.org', '@type':'OnlineStore', name:storeName,
+    url:APP_URL + '/store/' + encodeURIComponent(slug), description,
+    image:image || undefined,
+    telephone:config.contact?.phone || undefined,
+    email:config.contact?.email || undefined,
+    address:config.contact?.address ? { '@type':'PostalAddress', streetAddress:config.contact.address, addressCountry:config.contact.country || undefined } : undefined
+  };
+  const breadcrumbLd = product ? {
+    '@context':'https://schema.org','@type':'BreadcrumbList',
+    itemListElement:[
+      {'@type':'ListItem',position:1,name:storeName,item:APP_URL + '/store/' + encodeURIComponent(slug)},
+      {'@type':'ListItem',position:2,name:product.title,item:canonical}
+    ]
+  } : null;
+  const structured = product ? [productLd,breadcrumbLd] : storeLd;
+  const jsonld = JSON.stringify(structured).replace(/</g,'\\u003c');
   const context = JSON.stringify({ slug, productId:product?.id || null }).replace(/</g,'\\u003c');
   const body = publicStoreMarkup(config, products, slug, product);
   const css = '<link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/products.css"><link rel="stylesheet" href="/storeshop.css">';
   const scripts = '<script src="/ui.js" defer></script><script src="/store.js" defer></script><script src="/kit.js" defer></script><script src="/storefront.js" defer></script><script src="/storeshop.js" defer></script><script src="/store-runtime.js" defer></script>';
   return '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>' + htmlEscape(title) + '</title>' +
     '<meta name="description" content="' + htmlEscape(description) + '"><link rel="canonical" href="' + htmlEscape(canonical) + '">' +
+    '<meta property="og:site_name" content="' + htmlEscape(storeName) + '"><meta property="og:url" content="' + htmlEscape(canonical) + '">' +
     '<meta property="og:type" content="' + (product ? 'product' : 'website') + '"><meta property="og:title" content="' + htmlEscape(title) + '"><meta property="og:description" content="' + htmlEscape(description) + '">' +
-    (image ? '<meta property="og:image" content="' + htmlEscape(image) + '">' : '') +
+    (image ? '<meta property="og:image" content="' + htmlEscape(image) + '"><meta name="twitter:image" content="' + htmlEscape(image) + '">' : '') +
     '<meta name="twitter:card" content="' + (image ? 'summary_large_image' : 'summary') + '"><meta name="twitter:title" content="' + htmlEscape(title) + '"><meta name="twitter:description" content="' + htmlEscape(description) + '">' +
     '<meta name="robots" content="index,follow,max-image-preview:large"><script type="application/ld+json">' + jsonld + '</script>' + css + '</head><body style="margin:0"><main id="store-root">' + body + '</main><script>window.STRAP_PUBLIC_CONTEXT=' + context + ';</script>' + scripts + '</body></html>';
 }
