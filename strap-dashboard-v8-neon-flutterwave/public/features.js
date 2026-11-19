@@ -62,10 +62,11 @@ window.StrapFeatures = (() => {
   /* ===== per-branch products ===== */
   const ik = id => id || S.active;
   const items = id => S.itemsByBranch[ik(id)] || [];
+  const isPublicAssetUrl = value => /^https?:\/\/[^\s"'<>]+$/i.test(String(value || ''));
   const setItems = async (list, id, persist = true) => {
     S.itemsByBranch[ik(id)] = list.map(({ media, ...p }) => {
-      const remoteFiles = Array.isArray(p.files) ? p.files.filter(f => /^https?:\\/\\//i.test(String(f?.url || ''))).map(({ name, type, url }) => ({ name, type, url })) : [];
-      const image = /^https?:\\/\\//i.test(String(p.image || '')) ? p.image : '';
+      const remoteFiles = Array.isArray(p.files) ? p.files.filter(f => isPublicAssetUrl(f?.url)).map(({ name, type, url }) => ({ name, type, url })) : [];
+      const image = isPublicAssetUrl(p.image) ? p.image : '';
       return { ...p, image, files: remoteFiles };
     });
     if (persist) await save();
