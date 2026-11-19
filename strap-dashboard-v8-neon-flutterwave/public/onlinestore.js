@@ -9,8 +9,7 @@ window.StrapOnline = (() => {
   const products = () => { try { return StrapFeatures.items() || []; } catch (e) { return []; } };
   const activeCount = c => F.catalog(c, products()).length;
   const slug = s => String(s || '').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 30);
-  const url = c => (c.domain && c.domain.type === 'custom' && c.domain.status === 'live' && c.domain.host)
-    ? c.domain.host : location.host + '/store/' + encodeURIComponent(c.domain?.slug || slug(c.name));
+  const url = c => location.host + '/store/' + encodeURIComponent(c.domain?.slug || slug(c.name));
   const ago = t => { const m = Math.max(1, Math.round((Date.now() - t) / 6e4)); return m < 60 ? m + ' min ago' : m < 1440 ? Math.round(m / 60) + ' hr ago' : Math.round(m / 1440) + ' d ago'; };
   const copy = async t => { try { await navigator.clipboard.writeText(t); } catch (e) { const a = document.createElement('textarea'); a.value = t; document.body.appendChild(a); a.select(); try { document.execCommand('copy'); } catch (_) {} a.remove(); } };
   const rand = n => Array.from(crypto.getRandomValues(new Uint8Array(n)), b => 'abcdefghjkmnpqrstuvwxyz23456789'[b % 31]).join('');
