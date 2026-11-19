@@ -31,6 +31,7 @@ const COOKIE_NAME = ENV.SESSION_COOKIE_NAME || 'strap_session';
 const SESSION_DAYS = Number(ENV.SESSION_DAYS || 14);
 const CURRENCY = ENV.DEFAULT_CURRENCY || 'NGN';
 const CODE_TTL_MIN = Number(ENV.EMAIL_CODE_TTL_MINUTES || 10);
+const emailDeliveryConfigured = Boolean(ENV.RESEND_API_KEY || ENV.SMTP_HOST);
 const CODE_PEPPER = ENV.CODE_PEPPER || ENV.SESSION_SECRET || 'change-this';
 const SESSION_SECRET = ENV.SESSION_SECRET || 'development-only-change-this';
 const FLW_SECRET = ENV.FLW_SECRET_KEY || '';
@@ -42,7 +43,25 @@ let neonJwks;
 
 app.set('trust proxy', Number(ENV.TRUST_PROXY || 1));
 app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
-app.use(express.json({ limit: '2mb' }));
+// Workers-compatible JSON body parser: avoids body-parser/iconv-lite's Node stream shim.
+app.use((req, res, next) => {
+  if (req.method === 'GET' || req.method === 'HEAD') { req.body = {}; return next(); }
+  const contentType = String(req.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
+  if (contentType !== 'application/json') { req.body = {}; return next(); }
+  let raw = '', size = 0, tooLarge = false;
+  req.setEncoding('utf8');
+  req.on('data', chunk => {
+    size += Buffer.byteLength(chunk);
+    if (size > 2 * 1024 * 1024) { tooLarge = true; return; }
+    if (!tooLarge) raw += chunk;
+  });
+  req.on('end', () => {
+    if (tooLarge) return fail(res, 413, 'Request body is too large.');
+    try { req.body = raw ? JSON.parse(raw) : {}; next(); }
+    catch { return fail(res, 400, 'Request body must be valid JSON.'); }
+  });
+  req.on('error', next);
+});
 app.use(cookieParser());
 // Vercel routes all requests through the Express function so HTML, CSS, JS and API
 // requests are served by the same app root. Strip the internal rewrite prefix early,
@@ -52,7 +71,7 @@ app.use((req, _res, next) => {
   next();
 });
 app.use(rateLimit({ windowMs: 60_000, limit: 180, standardHeaders: 'draft-7', legacyHeaders: false }));
-app.use('/api/auth', rateLimit({ windowMs: 15 * 60_000, limit: 30, standardHeaders: 'draft-7', legacyHeaders: false }));
+app.use('/api/auth', rateLimit({ windowMs: 15 * 60_000, limit: 60, standardHeaders: 'draft-7', legacyHeaders: false }));
 
 const hash = value => crypto.createHash('sha256').update(String(value)).digest('hex');
 const randomToken = () => crypto.randomBytes(32).toString('base64url');
@@ -235,12 +254,18 @@ app.post('/api/auth/verification/verify', asyncRoute(async (req, res) => {
 }));
 app.post('/api/auth/register', neonIdentity, asyncRoute(async (req, res) => {
   const email = req.neonIdentity.email;
+  if (!req.neonIdentity.emailVerified) return fail(res, 403, 'Verify your email with Neon Auth before creating your Strap workspace.');
   const name = cleanText(req.body.name, 120), bizname = cleanText(req.body.bizname, 140);
   if (!name || !bizname) return fail(res, 400, 'Your name and business name are required.');
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    let found = await client.query('SELECT id,email,full_name,photo_url FROM users WHERE neon_auth_user_id=$1 OR email=$2 LIMIT 1', [req.neonIdentity.id, email]);
+    let found = await client.query('SELECT id,email,full_name,photo_url,neon_auth_user_id FROM users WHERE neon_auth_user_id=$1 LIMIT 1', [req.neonIdentity.id]);
+    if (!found.rowCount) found = await client.query('SELECT id,email,full_name,photo_url,neon_auth_user_id FROM users WHERE email=$1 LIMIT 1', [email]);
+    if (found.rowCount && found.rows[0].neon_auth_user_id && found.rows[0].neon_auth_user_id !== req.neonIdentity.id) {
+      await client.query('ROLLBACK');
+      return fail(res, 409, 'This email is already linked to another authentication account. Sign in with the original account.');
+    }
     let user;
     if (found.rowCount) {
       const updated = await client.query(
@@ -278,6 +303,7 @@ app.post('/api/auth/register', neonIdentity, asyncRoute(async (req, res) => {
   } finally { client.release(); }
 }));
 app.post('/api/auth/sync', neonIdentity, asyncRoute(async (req, res) => {
+  if (!req.neonIdentity.emailVerified) return fail(res, 403, 'Verify your email with Neon Auth before signing in.');
   const result = await pool.query(
     'SELECT u.id,u.email,u.full_name,u.photo_url,u.created_at,b.name AS business_name,b.currency,b.country FROM users u LEFT JOIN businesses b ON b.owner_id=u.id AND b.is_default=true WHERE u.neon_auth_user_id=$1 OR u.email=$2 LIMIT 1',
     [req.neonIdentity.id, req.neonIdentity.email]
