@@ -14,6 +14,7 @@ id = "cf43f792e75c41b0adafce60f71ddc3b"
 
 [vars]
 STRAP_WORKERS = "true"
+STRAP_DEBUG = "true"
 NODE_ENV = "production"
 APP_URL = "https://strap-preview.strap-preview.workers.dev"
 DEFAULT_CURRENCY = "NGN"
