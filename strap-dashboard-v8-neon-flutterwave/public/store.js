@@ -1,19 +1,24 @@
 /* Strap – shared in-memory state. Durable account data is persisted to Neon through StrapAPI. */
 window.StrapStore = (() => {
   const blank = () => ({
-    sales: [], payments: [], held: [], collections: [], credits: [], seq: 0, closed: null, pin: null, lock: { n: 0, until: 0 }, receipt: null, online: null, orders: [], oseq: 1000,
+    sales: [], payments: [], held: [], collections: [], credits: [], seq: 0, closed: null, pin: null, lock: { n: 0, until: 0 }, receipt: null, online: null, orders: [], oseq: 1000, pageData: { customers: [], purchase: [], transfers: [], gift: [] },
     prefs: { sound: true, vibrate: true, creditReminders: true, orderAlerts: true, lowStock: true }
   });
   let S = blank();
-  const save = () => {
-    if (window.StrapAPI) window.StrapAPI.data.set('store', S).catch(e => console.error('Could not save Strap data:', e));
-  };
+  const save = () => window.StrapAPI ? window.StrapAPI.data.set('store', S) : Promise.reject(new Error('Strap storage is not ready.'));
+  const timeout = (promise, ms, message) => Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(message)), ms))
+  ]);
   async function hydrate() {
     const remote = window.StrapAPI?.data.get('store');
-    if (remote && typeof remote === 'object') {
-      Object.assign(S, remote);
-      S.prefs = Object.assign(S.prefs || blank().prefs, remote.prefs || {});
-    }
+    if (remote && typeof remote === 'object' && !Array.isArray(remote)) Object.assign(S, remote);
+    const base = blank();
+    for (const key of ['sales','payments','held','collections','credits','orders']) S[key] = Array.isArray(S[key]) ? S[key] : base[key];
+    S.prefs = Object.assign({}, base.prefs, S.prefs || {});
+    S.lock = Object.assign({ n: 0, until: 0 }, S.lock || {});
+    S.pageData = Object.assign({}, base.pageData, S.pageData || {});
+    for (const key of Object.keys(base.pageData)) S.pageData[key] = Array.isArray(S.pageData[key]) ? S.pageData[key] : [];
     return S;
   }
 
@@ -21,19 +26,26 @@ window.StrapStore = (() => {
     DEMO: false,
     async sendCode(email) {
       try {
-        const { error } = await window.StrapNeonAuth.client.emailOtp.sendVerificationOtp({ email, type: 'email-verification' });
+        const { error } = await timeout(window.StrapNeonAuth.client.emailOtp.sendVerificationOtp({ email, type: 'email-verification' }), 15000, 'Email verification is taking too long. Please retry.');
         if (error) throw error;
         return { ok: true };
       } catch (e) { return { ok: false, msg: e.message || 'Could not send the Neon verification code.' }; }
     },
     async verifyCode(email, code) {
       try {
-        const { error } = await window.StrapNeonAuth.client.emailOtp.checkVerificationOtp({ email, otp: code, type: 'email-verification' });
+        const { error } = await timeout(window.StrapNeonAuth.client.emailOtp.checkVerificationOtp({ email, otp: code, type: 'email-verification' }), 15000, 'Code verification is taking too long. Please retry.');
         if (error) throw error;
         return { ok: true };
       } catch (e) { return { ok: false, msg: e.message || 'The verification code is invalid.' }; }
     },
-    async savePin(pinHash) { return { ok: true }; },
+    async savePin(pin) {
+      try { await window.StrapAPI.request('/api/security/pin', { method: 'POST', body: JSON.stringify({ pin }) }); return { ok: true }; }
+      catch (e) { return { ok: false, msg: e.message || 'Could not save your activity PIN.' }; }
+    },
+    async checkPin(pin) {
+      try { const result = await window.StrapAPI.request('/api/security/pin/verify', { method: 'POST', body: JSON.stringify({ pin }) }); return { ok: true, valid: !!result.valid }; }
+      catch (e) { return { ok: false, valid: false, msg: e.message || 'Could not verify your activity PIN.' }; }
+    },
     async changePassword(current, next) {
       try {
         const { error } = await window.StrapNeonAuth.client.changePassword({
@@ -64,7 +76,12 @@ window.StrapStore = (() => {
       try { await window.StrapAPI.data.set('onlineStore', config); return { ok: true }; }
       catch (e) { return { ok: false, msg: e.message }; }
     },
-    async pullOrders() { return window.StrapAPI.data.get('store', {}).orders || []; }
+    async pullOrders() {
+      await window.StrapAPI.refreshData();
+      const latest = window.StrapAPI.data.get('store', {}) || {};
+      S.orders = Array.isArray(latest.orders) ? latest.orders : [];
+      return S.orders;
+    }
   };
 
   const pad = (n, l = 2) => String(n).padStart(l, '0');
