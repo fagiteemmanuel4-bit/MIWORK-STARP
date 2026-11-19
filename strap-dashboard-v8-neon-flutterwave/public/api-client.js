@@ -101,7 +101,13 @@
       state.data = saved.data || {};
       return state;
     },
-    async logout() { await request('/api/auth/logout', { method: 'POST', body: '{}' }); state.user = null; },
+    async logout() {
+      try { await request('/api/auth/logout', { method: 'POST', body: '{}' }); }
+      finally {
+        try { await window.StrapNeonAuth?.client?.signOut(); }
+        finally { state.user = null; state.data = {}; }
+      }
+    },
     async renameBusiness(name) { return request('/api/account/business', { method: 'PATCH', body: JSON.stringify({ name }) }); }
   };
 })();
