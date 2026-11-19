@@ -264,13 +264,16 @@ app.post('/api/auth/sync', neonIdentity, asyncRoute(async (req, res) => {
       if (error.code !== '23505') throw error;
     } finally { client.release(); }
     result = await pool.query(
-      'SELECT u.id,u.email,u.full_name,u.photo_url,u.created_at,b.name AS business_name,b.currency,b.country FROM users u LEFT JOIN businesses b ON b.owner_id=u.id AND b.is_default=true WHERE u.neon_auth_user_id=$1 OR u.email=$2 LIMIT 1',
+      'SELECT u.id,u.email,u.full_name,u.photo_url,u.neon_auth_user_id,u.created_at,b.name AS business_name,b.currency,b.country FROM users u LEFT JOIN businesses b ON b.owner_id=u.id AND b.is_default=true WHERE u.neon_auth_user_id=$1 OR (u.email=$2 AND u.neon_auth_user_id IS NULL) LIMIT 1',
       [req.neonIdentity.id, req.neonIdentity.email]
     );
   }
   if (!result.rowCount) return fail(res, 409, 'We could not finish setting up your Strap profile. Please try again.');
   if (result.rows[0].neon_auth_user_id && result.rows[0].neon_auth_user_id !== req.neonIdentity.id) return fail(res, 409, 'This email is linked to a different Strap account.');
-  await pool.query('UPDATE users SET neon_auth_user_id=$2,updated_at=now() WHERE id=$1 AND neon_auth_user_id IS DISTINCT FROM $2', [result.rows[0].id, req.neonIdentity.id]);
+  if (!result.rows[0].neon_auth_user_id) {
+    const linked = await pool.query('UPDATE users SET neon_auth_user_id=$2,updated_at=now() WHERE id=$1 AND neon_auth_user_id IS NULL RETURNING id', [result.rows[0].id, req.neonIdentity.id]);
+    if (!linked.rowCount) return fail(res, 409, 'This email is already linked to another authentication account.');
+  }
   await createSession(result.rows[0].id, res);
   res.json({ ok: true, user: publicUser(result.rows[0]) });
 }));;
