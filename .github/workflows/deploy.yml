@@ -58,8 +58,12 @@ jobs:
           printf "%s\\n" "$health"
           printf "%s" "$health" | grep -q '"database":"connected"'
           curl --fail --show-error --silent "$PREVIEW_URL/" | grep -qi "<html"
-          curl --fail --show-error --silent "$PREVIEW_URL/dashboard.html" | grep -q "dashboard.js?v=20261119-dashboard-fix"
-          curl --fail --show-error --silent "$PREVIEW_URL/features.js?v=20261119-dashboard-fix" | grep -q "S.notifs = Array.isArray"
+          echo "Checking dashboard HTML route"
+          curl --fail --show-error --silent "$PREVIEW_URL/dashboard.html" -o /tmp/strap-dashboard.html
+          grep -q "dashboard.js?v=20261119-dashboard-fix" /tmp/strap-dashboard.html
+          echo "Checking dashboard feature asset"
+          curl --fail --show-error --silent "$PREVIEW_URL/features.js?v=20261119-dashboard-fix" -o /tmp/strap-features.js
+          grep -q "S.notifs = Array.isArray" /tmp/strap-features.js
           curl --fail --show-error --silent "$PREVIEW_URL/api/config" | grep -q '"emailProvider":"Neon Auth"'
           curl --fail --show-error --silent "$PREVIEW_URL/script.js" | grep -q '0x4AAAAAAGIY0URD6s_Mg1m1'
           status="$(curl --silent --output /dev/null --write-out "%{http_code}" -X POST -H 'Content-Type: application/json' -d '{}' "$PREVIEW_URL/api/auth/register")"
