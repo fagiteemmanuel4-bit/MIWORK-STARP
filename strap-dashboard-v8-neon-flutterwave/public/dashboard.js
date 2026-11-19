@@ -18,6 +18,13 @@
   Object.assign(api, {
     async getDashboard() {
       await window.StrapAPI.ready;
+      // A fresh page can race the persisted Neon session on slower mobile
+      // connections. Retry the authenticated profile request once before
+      // deciding that the user is signed out.
+      if (!window.StrapAPI.user) {
+        try { await window.StrapAPI.refresh(); }
+        catch (error) { console.warn('Strap dashboard session restore retry failed:', error); }
+      }
       if (!window.StrapAPI.user) { location.replace('index.html'); return null; }
       await Promise.all([StrapStore.hydrate(), StrapFeatures.hydrate()]);
       D = window.StrapAPI.user;
@@ -77,21 +84,50 @@
       loaderMsg.style.animation = 'none'; void loaderMsg.offsetWidth; loaderMsg.style.animation = '';
     }, LOAD_MIN / LOAD_MSGS.length);
   }
+  function showBootError(error) {
+    console.error('Strap dashboard startup failed:', error);
+    dash.hidden = true;
+    dash.replaceChildren();
+    loader.hidden = false;
+    loader.classList.remove('out');
+    loader.classList.add('on');
+    loaderMsg.textContent = 'We couldn’t finish opening your dashboard. Please try again.';
+    const inner = $('.ld-in', loader);
+    let retry = $('#dash-retry', loader);
+    if (!retry) {
+      retry = document.createElement('button');
+      retry.id = 'dash-retry';
+      retry.type = 'button';
+      retry.textContent = 'Try again';
+      retry.style.cssText = 'margin-top:18px;padding:14px 26px;border:0;border-radius:999px;background:#0a0a0a;color:#e6f53a;font:600 15px Sora, sans-serif;';
+      retry.addEventListener('click', () => { retry.disabled = true; retry.textContent = 'Retrying…'; location.reload(); });
+      inner.appendChild(retry);
+    }
+    document.body.classList.add('lock');
+  }
   async function boot() {
     loader.hidden = false; loader.classList.add('on');
     const msgs = startMsgs(), t0 = Date.now();
-    let data; try { data = await api.getDashboard(D); } catch (e) { data = null; }
-    await sleep(Math.max(0, LOAD_MIN - (Date.now() - t0)));
-    clearInterval(msgs);
-    if (!data) { loaderMsg.textContent = 'We couldn’t load your dashboard. Refresh to try again.'; return; }
-    buildDash(data);
-    dash.hidden = false; document.body.classList.add('is-dash');
-    const tc = document.querySelector('meta[name=theme-color]'); if (tc) tc.content = '#0a0a0a';
-    window.scrollTo(0, 0);
-    await sleep(80);
-    dash.classList.add('go'); loader.classList.add('out'); runCounts();
-    await sleep(reduced() ? 0 : 850);
-    loader.hidden = true; loader.className = 'loader'; document.body.classList.remove('lock');
+    try {
+      const data = await api.getDashboard(D);
+      await sleep(Math.max(0, LOAD_MIN - (Date.now() - t0)));
+      clearInterval(msgs);
+      if (!data) {
+        loaderMsg.textContent = 'We couldn’t find an active session. Returning to sign in…';
+        return;
+      }
+      buildDash(data);
+      dash.hidden = false; document.body.classList.add('is-dash');
+      const tc = document.querySelector('meta[name=theme-color]'); if (tc) tc.content = '#0a0a0a';
+      window.scrollTo(0, 0);
+      await sleep(80);
+      dash.classList.add('go'); loader.classList.add('out'); runCounts();
+      await sleep(reduced() ? 0 : 850);
+      loader.hidden = true; loader.className = 'loader'; document.body.classList.remove('lock');
+    } catch (error) {
+      clearInterval(msgs);
+      showBootError(error);
+    }
   }
 
   const TAB_ICONS = ['home', 'inbox', 'tag', 'menu'], TAB_NAMES = ['Home', 'Orders', 'Products', 'Menu'];
