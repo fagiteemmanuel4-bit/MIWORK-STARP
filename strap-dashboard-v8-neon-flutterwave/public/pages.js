@@ -79,9 +79,8 @@ window.StrapPages = (() => {
     const plural = k => `${k} product${k === 1 ? '' : 's'}`;
     const add = () => formSheet({ title: 'Create collection', fields: CFG.collections.fields, cta: 'Create collection' }, v => {
       if (CS.find(v[0])) return ctx.toast('You already have a collection with that name');
-      const created = CS.add(v[0], v[1] || '');
-      try { await StrapStore.save(); }
-      catch (error) { if (created) CS.remove(created.id); throw error; }
+      let created;
+      await StrapStore.batch(async () => { created = CS.add(v[0], v[1] || ''); });
       draw(); ctx.toast('Collection created');
     });
     function draw() {
