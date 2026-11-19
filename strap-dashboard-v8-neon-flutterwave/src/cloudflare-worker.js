@@ -67,7 +67,7 @@ export default {
     // signed raw request body can be verified before any JSON body parsing.
     if (request.method === "POST" && url.pathname === "/api/webhooks/neon-auth") {
       try {
-        if (!(await applyRateLimit(env.API_RATE_LIMITER, `neon-auth:${ip}`)) {
+        if (!(await applyRateLimit(env.API_RATE_LIMITER, `neon-auth:${ip}`))) {
           return Response.json({ ok: false, message: "Too many requests. Please try again shortly." }, {
             status: 429, headers: { "Retry-After": "60" }
           });
