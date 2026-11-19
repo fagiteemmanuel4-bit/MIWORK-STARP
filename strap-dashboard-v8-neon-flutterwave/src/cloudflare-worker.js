@@ -1,5 +1,6 @@
 import { createServer } from "node:http";
 import { handleAsNodeRequest } from "cloudflare:node";
+import { handleNeonAuthEmailWebhook } from "../email.js";
 
 let appHandlerPromise;
 
@@ -60,13 +61,30 @@ async function applyRateLimit(binding, key) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+    const ip = request.headers.get("CF-Connecting-IP") || "unknown";
+
+    // Neon Auth OTP delivery is handled directly at the Worker edge so its
+    // signed raw request body can be verified before any JSON body parsing.
+    if (request.method === "POST" && url.pathname === "/api/webhooks/neon-auth") {
+      try {
+        if (!(await applyRateLimit(env.API_RATE_LIMITER, `neon-auth:${ip}`))) {
+          return Response.json({ ok: false, message: "Too many requests. Please try again shortly." }, {
+            status: 429, headers: { "Retry-After": "60" }
+          });
+        }
+        return await handleNeonAuthEmailWebhook(request, env);
+      } catch (error) {
+        console.error("Strap Neon Auth email webhook failed:", error);
+        return Response.json({ ok: false, message: "Email delivery is temporarily unavailable." }, { status: 503 });
+      }
+    }
+
     const dynamicPaths = url.pathname.startsWith("/api/") ||
       url.pathname.startsWith("/store/") ||
       url.pathname === "/robots.txt" ||
       url.pathname === "/sitemap.xml";
     if (!dynamicPaths) return env.ASSETS.fetch(request);
 
-    const ip = request.headers.get("CF-Connecting-IP") || "unknown";
     try {
       if (!(await applyRateLimit(env.API_RATE_LIMITER, ip))) {
         return Response.json({ ok: false, message: "Too many requests. Please wait a moment and try again." }, {
