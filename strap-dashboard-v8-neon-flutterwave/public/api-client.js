@@ -102,11 +102,8 @@
       return state;
     },
     async logout() {
-      try { await request('/api/auth/logout', { method: 'POST', body: '{}' }); }
-      finally {
-        try { await window.StrapNeonAuth?.client?.signOut(); }
-        finally { state.user = null; state.data = {}; }
-      }
+      try { await window.StrapNeonAuth?.client?.signOut(); }
+      finally { state.user = null; state.data = {}; }
     },
     async renameBusiness(name) { return request('/api/account/business', { method: 'PATCH', body: JSON.stringify({ name }) }); }
   };
