@@ -173,13 +173,25 @@ async function auth(req, res, next) {
   try {
     const identity = await getNeonIdentity(req);
     if (identity) {
-      const result = await pool.query(
+      let result = await pool.query(
         `SELECT u.id,u.email,u.full_name,u.photo_url,u.created_at,
                 b.id AS business_id,b.name AS business_name,b.currency,b.country,b.plan
          FROM users u LEFT JOIN businesses b ON b.owner_id=u.id AND b.is_default=true
-         WHERE (u.neon_auth_user_id=$1 OR u.email=$2) AND u.disabled_at IS NULL LIMIT 1`,
-        [identity.id, identity.email]
+         WHERE u.neon_auth_user_id=$1 AND u.disabled_at IS NULL LIMIT 1`,
+        [identity.id]
       );
+      if (!result.rowCount) {
+        result = await pool.query(
+          `SELECT u.id,u.email,u.full_name,u.photo_url,u.created_at,
+                  b.id AS business_id,b.name AS business_name,b.currency,b.country,b.plan
+           FROM users u LEFT JOIN businesses b ON b.owner_id=u.id AND b.is_default=true
+           WHERE u.email=$1 AND u.neon_auth_user_id IS NULL AND u.disabled_at IS NULL LIMIT 1`,
+          [identity.email]
+        );
+        if (result.rowCount) {
+          await pool.query('UPDATE users SET neon_auth_user_id=$2,updated_at=now() WHERE id=$1 AND neon_auth_user_id IS NULL', [result.rows[0].id, identity.id]);
+        }
+      }
       if (result.rowCount) {
         req.user = result.rows[0];
         return next();
