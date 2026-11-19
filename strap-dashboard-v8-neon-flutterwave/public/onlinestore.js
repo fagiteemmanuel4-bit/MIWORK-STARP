@@ -238,8 +238,10 @@ window.StrapOnline = (() => {
   const setStatus = async c => {
     const previous = c.status;
     c.status = previous === 'live' ? 'paused' : 'live';
-    if (await save(c)) toast(c.status === 'live' ? 'Your store is open again' : 'Store paused');
+    const ok = await save(c);
+    if (ok) toast(c.status === 'live' ? 'Your store is open again' : 'Store paused');
     else c.status = previous;
+    return ok;
   };
 
   function page(root, ctx) {
@@ -271,7 +273,7 @@ window.StrapOnline = (() => {
       if (menu) { menu = false; }
       if (!c) return draw();
       if (act === 'm-preview') preview(c); else if (act === 'm-share' || act === 'fix-share') share(c);
-      else if (act === 'm-pause' || act === 'fix-resume') setStatus(c);
+      else if (act === 'm-pause' || act === 'fix-resume') await setStatus(c);
       else if (act === 'm-settings') settings(ctx);
       else if (act === 'fix-domain') settings(ctx, 'domain'); else if (act === 'fix-products') settings(ctx, 'products'); else if (act === 'fix-details') settings(ctx, 'details');
       else if (act === 'orders') ctx.go('orders');
@@ -372,7 +374,7 @@ window.StrapOnline = (() => {
       if (a.dataset.addSection) { const t=a.dataset.addSection, defaults={announcement:{type:t,text:'Welcome to our store'},banner:{type:t,title:'A little something special',text:'Discover our latest collection.'},products:{type:t,title:'Shop our products',layout:'grid'},about:{type:t,title:'About us',text:''},contact:{type:t,title:'Contact'},testimonials:{type:t,title:'What customers say',text:'Lovely quality and service.'},faq:{type:t,title:'FAQs',question:'How long does delivery take?',answer:'Contact us for delivery details.'},policies:{type:t,title:'Store policies',text:'Contact us for returns and delivery information.'},footer:{type:t}}; if(c.sections.length>=30)return toast('Maximum 30 sections');c.sections.push(defaults[t]);if (!(await save(c))) return;return draw();}
       if (a.dataset.export) { const data=a.dataset.export==='json'?JSON.stringify({format:'strap-template',version:1,config:{v:c.v||2,template:c.template,theme:c.theme,sections:c.sections}},null,2):F.toXml({v:c.v||2,template:c.template,theme:c.theme,sections:c.sections}); const blob=new Blob([data],{type:a.dataset.export==='json'?'application/json':'application/xml'}),u=URL.createObjectURL(blob),ln=document.createElement('a');ln.href=u;ln.download='strap-store-template.'+a.dataset.export;ln.click();URL.revokeObjectURL(u);return toast('Template exported');}
       if (act === 'to') { stack.push(v); el.scrollTop = 0; return draw(); }
-      if (act === 'live') { setStatus(c); return draw(); }
+      if (act === 'live') { await setStatus(c); return draw(); }
       if (act === 'set') {
         const k = a.dataset.k;
         if (k === 'template') F.applyTemplate(c, v); else if (k === 'mode') { c.theme.bg = F.MODES[v].bg; c.theme.ink = F.MODES[v].ink; } else if (k === 'accent') c.theme.accent = v; else if (k === 'font') c.theme.font = v; else if (k === 'radius') c.theme.radius = +v;
@@ -394,8 +396,8 @@ window.StrapOnline = (() => {
         if (!(await save(c))) return;
         K.fx('ok'); toast('Store details and SEO saved'); stack.pop(); return draw();
       }
-      if (act === 'savesub') { c.domain = { type:'sub', slug:Dm.sub, host:location.host + '/store/' + Dm.sub, status:'live', token:'' }; await save(c); K.fx('ok'); toast('Store address updated'); Dm.sub = ''; Dm.state = 'idle'; return draw(); }
-      if (act === 'usesub') { const nextSlug = c.domain.slug || slug(c.name); c.domain = { type:'sub', slug:nextSlug, host:location.host + '/store/' + nextSlug, status:'live', token:'' }; await save(c); toast('Using your free Strap address'); return draw(); }
+      if (act === 'savesub') { c.domain = { type:'sub', slug:Dm.sub, host:location.host + '/store/' + Dm.sub, status:'live', token:'' }; if (!(await save(c))) return; K.fx('ok'); toast('Store address updated'); Dm.sub = ''; Dm.state = 'idle'; return draw(); }
+      if (act === 'usesub') { const nextSlug = c.domain.slug || slug(c.name); c.domain = { type:'sub', slug:nextSlug, host:location.host + '/store/' + nextSlug, status:'live', token:'' }; if (!(await save(c))) return; toast('Using your free Strap address'); return draw(); }
       if (act === 'startcustom') { toast('Custom domain routing is not enabled for this preview yet. Your free Strap address is live.'); return; }
       if (act === 'addcustom') { toast('Custom domain routing is not enabled for this preview yet. Your free Strap address remains active.'); return; }
       if (act === 'verify') {
