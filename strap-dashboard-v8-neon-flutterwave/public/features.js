@@ -14,7 +14,7 @@ window.StrapFeatures = (() => {
     reports: [], seeded: false, pushAsked: false, mcp: [], transfers: [], dismissed: [], itemsByBranch: {}
   });
   let S = defaults();
-  const save = () => { if (window.StrapAPI) window.StrapAPI.data.set('features', S).catch(e => console.error('Could not save feature data:', e)); };
+  const save = () => window.StrapAPI ? window.StrapAPI.data.set('features', S) : Promise.reject(new Error('Strap storage is not ready.'));
   async function hydrate() {
     const remote = window.StrapAPI?.data.get('features');
     if (remote && typeof remote === 'object' && !Array.isArray(remote)) Object.assign(S, remote);
@@ -28,6 +28,10 @@ window.StrapFeatures = (() => {
     S.reports = Array.isArray(S.reports) ? S.reports : [];
     S.dismissed = Array.isArray(S.dismissed) ? S.dismissed : [];
     S.staff = Array.isArray(S.staff) ? S.staff : [];
+    S.transfers = Array.isArray(S.transfers) ? S.transfers : [];
+    S.mcp = Array.isArray(S.mcp) ? S.mcp : [];
+    S.seeded = Boolean(S.seeded);
+    S.pushAsked = Boolean(S.pushAsked);
     S.branches = Array.isArray(S.branches) && S.branches.length ? S.branches : defaults().branches;
     if (!S.branches.some(b => b.id === S.active)) S.active = S.branches[0].id;
     S.itemsByBranch = S.itemsByBranch && typeof S.itemsByBranch === 'object' && !Array.isArray(S.itemsByBranch) ? S.itemsByBranch : {};
@@ -47,7 +51,6 @@ window.StrapFeatures = (() => {
       try { await window.StrapAPI.request('/api/account', { method: 'DELETE', body: JSON.stringify(payload || {}) }); return { ok: true }; }
       catch (e) { return { ok: false, msg: e.message }; }
     },
-    async createStaff(s) { return { ok: true }; },
     async checkout() { return { ok: false, msg: 'Use the hosted Flutterwave checkout to make a payment.' }; },
     async aiExtract({ text, file }) { return null; }       // return [{title,price,qty}] from Strap AI; null = use the built-in text reader
   };
@@ -62,7 +65,25 @@ window.StrapFeatures = (() => {
   /* ===== per-branch products ===== */
   const ik = id => id || S.active;
   const items = id => S.itemsByBranch[ik(id)] || [];
-  const setItems = (list, id) => { S.itemsByBranch[ik(id)] = list.map(({ media, ...p }) => p); save(); };
+  const isPublicAssetUrl = value => /^https?:\/\/[^\s"'<>]+$/i.test(String(value || ''));
+  const setItems = async (list, id, persist = true) => {
+    const key = ik(id), previous = S.itemsByBranch[key];
+    const clean = (Array.isArray(list) ? list : []).filter(p => p && typeof p === 'object').map(({ media, ...p }) => {
+      const remoteFiles = Array.isArray(p.files) ? p.files.filter(f => isPublicAssetUrl(f?.url)).map(({ name, type, url }) => ({ name, type, url })) : [];
+      const image = isPublicAssetUrl(p.image) ? p.image : '';
+      return { ...p, image, files: remoteFiles };
+    });
+    S.itemsByBranch[key] = clean;
+    if (persist) {
+      try { await save(); }
+      catch (error) {
+        if (previous === undefined) delete S.itemsByBranch[key];
+        else S.itemsByBranch[key] = previous;
+        throw error;
+      }
+    }
+    return S.itemsByBranch[key];
+  };
   const branch = id => S.branches.find(b => b.id === (id || S.active)) || S.branches[0];
 
   /* ===== loader + roll-out screens ===== */
@@ -145,9 +166,9 @@ window.StrapFeatures = (() => {
       ${reasons.map((r, i) => chk(A.reasons.has(r), r, 'r' + i)).join('')}<label class="pm-fl"><span>Anything else? (optional)</span><input id="dn" maxlength="200" value="${esc(A.note)}"></label>
       <button class="fx-btn" data-n1 ${A.reasons.size ? '' : 'disabled'}>Continue</button><button class="fx-btn o" data-x>Keep my account</button>`);
     const step2 = () => s.set(head('Delete account', false) + `<h2 class="fx-h">What will happen</h2>
-      <div class="fx-warn"><b>Deleting your account will:</b><ul><li>Remove your login, 2FA, PIN and all staff accounts</li><li>Delete every branch, product, sale, customer and receipt setting</li><li>Disconnect any AI tools you’ve authorised</li><li>Be permanent: we can’t restore it afterwards</li></ul></div>
+      <div class="fx-warn"><b>Deleting your account will:</b><ul><li>Remove your login, 2FA, PIN and team roster records</li><li>Delete every branch, product, sale, customer and receipt setting</li><li>Disconnect any AI tools you’ve authorised</li><li>Be permanent: we can’t restore it afterwards</li></ul></div>
       <div class="fx-card"><b>Your store record</b><small>For legal and reference purposes, Strap keeps a record of your store (its name, branches and plan history). Your personal login details are removed.</small></div>
-      <h2 class="pm-h">Privacy policy</h2><div class="fx-doc"><h4>What we keep</h4>A reference record of your store, such as its name, branches and subscription history, is kept for audit, fraud prevention and legal obligations.<h4>What we delete</h4>Your sign-in details, staff accounts, PINs, 2FA keys, products, customers and sales data are deleted from active systems.<h4>Your rights</h4>You can ask us what we hold about your store or request correction at any time by contacting support.</div>
+      <h2 class="pm-h">Privacy policy</h2><div class="fx-doc"><h4>What we keep</h4>A reference record of your store, such as its name, branches and subscription history, is kept for audit, fraud prevention and legal obligations.<h4>What we delete</h4>Your sign-in details, team roster records, PINs, 2FA keys, products, customers and sales data are deleted from active systems.<h4>Your rights</h4>You can ask us what we hold about your store or request correction at any time by contacting support.</div>
       ${chk(A.agree, 'I’ve read this and the privacy policy, and I understand my account can’t be restored.', 'ag')}<button class="fx-btn" data-n2 ${A.agree ? '' : 'disabled'}>Continue</button><button class="fx-btn o" data-b1>Back</button>`);
     const step3 = () => s.set(head('Delete account', false) + `<h2 class="fx-h">Confirm deletion</h2><p class="fx-p">Type <b>DELETE</b> to confirm.</p><input class="fx-pin" id="dc" maxlength="6" style="letter-spacing:.2em;font-size:20px" placeholder="DELETE" autocapitalize="characters">
       <button class="fx-btn r" data-go disabled>Delete my account</button><button class="fx-btn o" data-b2>Back</button>`);
@@ -259,22 +280,21 @@ window.StrapFeatures = (() => {
     let w = n.toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(Boolean), k = w.filter(x => !skip.has(x)); if (!k.length) k = w;
     let s = k.join(''); if (s.length > max) s = k[0].slice(0, max - (k.length - 1)) + k.slice(1).map(x => x[0]).join(''); return (s || 'mystore').slice(0, max);
   };
-  const mailFor = (name, dom) => { const p = name.toLowerCase().replace(/[^a-z\s]/g, '').split(/\s+/).filter(Boolean); let m; do m = `${p[0] || 'staff'}${p[1] ? '.' + p[1][0] : ''}${10 + Math.floor(Math.random() * 90)}@${dom}.com`; while (S.staff.some(x => x.email === m)); return m; };
   function staffFlow() { cover('Opening', () => { const o = ob(); ensureSecure(o, 'manage staff', () => staffHome(o)); }); }
   function staffHome(o) {
-    o.step({ t: 'Staff', s: `${S.staff.length} of ${lim().staff} staff accounts used${S.plan === 'free' ? ' on the free plan' : ''}.`, back: null,
-      body: S.staff.length ? `<div class="rws">${S.staff.map(x => `<div class="rw ro"><i class="ri">${ic('users', 22, 1.8)}</i><div><b>${esc(x.name)}</b><small>${esc(x.role)} · ${esc(x.branch ? branch(x.branch).name : 'All branches')}<br>${esc(x.email)}</small></div><button type="button" class="rx" data-del="${x.id}" aria-label="Remove ${esc(x.name)}">${ic('trash', 20, 1.8)}</button></div>`).join('')}</div>` : `<div class="empt">${U.illus('customers')}<p>No staff yet. Add the people who help you run the business and give each one their own login.</p></div>`,
+    o.step({ t: 'Team roster', s: `${S.staff.length} of ${lim().staff} team members saved${S.plan === 'free' ? ' on the free plan' : ''}. Individual staff logins are not enabled yet.`, back: null,
+      body: S.staff.length ? `<div class="rws">${S.staff.map(x => `<div class="rw ro"><i class="ri">${ic('users', 22, 1.8)}</i><div><b>${esc(x.name)}</b><small>${esc(x.role)} · ${esc(x.branch ? branch(x.branch).name : 'All branches')}${x.email ? '<br>' + esc(x.email) : ''}</small></div><button type="button" class="rx" data-del="${x.id}" aria-label="Remove ${esc(x.name)}">${ic('trash', 20, 1.8)}</button></div>`).join('')}</div>` : `<div class="empt">${U.illus('customers')}<p>No team members yet. Save names, responsibilities and contact details in your team roster.</p></div>`,
       foot: pill('Add staff', 'data-add') + (S.plan === 'free' ? pill('Upgrade for branch staff', 'data-up', 'alt') : '') });
-    $('[data-add]', o.el).onclick = () => { if (S.staff.length >= lim().staff) return gate(`The free plan includes ${LIM.free.staff} staff accounts. Upgrade to Premium for more.`); addStaff(o); };
+    $('[data-add]', o.el).onclick = () => { if (S.staff.length >= lim().staff) return gate(`The free plan includes ${LIM.free.staff} team members. Upgrade to Premium for more.`); addStaff(o); };
     const up = $('[data-up]', o.el); if (up) up.onclick = () => open('premium');
-    $$('[data-del]', o.el).forEach(d => d.onclick = async () => { if (await K.confirm({ title: 'Remove this staff member?', body: 'Their login stops working immediately.', ok: 'Remove', cancel: 'Keep', icon: 'trash', danger: true })) { S.staff = S.staff.filter(x => x.id !== d.dataset.del); save(); staffHome(o); } });
+    $$('[data-del]', o.el).forEach(d => d.onclick = async () => { if (await K.confirm({ title: 'Remove this staff member?', body: 'Their team roster entry will be removed.', ok: 'Remove', cancel: 'Keep', icon: 'trash', danger: true })) { S.staff = S.staff.filter(x => x.id !== d.dataset.del); save(); staffHome(o); } });
   }
   function addStaff(o) {
-    const A = { name: '', role: '', branch: null, pin: '', dom: slug(ctx.store.bizname || 'store'), email: '' }, fn = () => esc(A.name.split(' ')[0]);
+    const A = { name: '', role: '', branch: null, email: '' }, fn = () => esc(A.name.split(' ')[0]);
     const home = () => staffHome(o);
     const privacy = () => { let agree = false;
       o.step({ t: 'Before you add staff', s: 'Staff can see parts of your business. Please confirm the privacy policy.', back: home,
-        body: `<div class="doc"><h4>Your responsibility</h4>You decide what each staff member can access and you’re responsible for how they use your store’s data.<h4>Staff data</h4>Strap stores each staff member’s name, role, work email and a protected PIN so they can sign in. PINs are never stored in plain text.<h4>Activity</h4>Sales and stock changes made by staff are recorded against their name so you can review them.<h4>Removal</h4>You can remove a staff member at any time and their access ends immediately.</div><button type="button" class="chk2" data-agree role="checkbox" aria-checked="false"><i>${ic('check', 16, 3)}</i><span>I accept the privacy policy and will tell my staff how their details are used.</span></button>`,
+        body: `<div class="doc"><h4>Your responsibility</h4>You decide who belongs on your team and which responsibilities they have.<h4>Staff data</h4>Strap stores each team member’s name, role, optional contact email and branch assignment in your workspace roster. Individual staff accounts and sign-in are not enabled yet.<h4>Activity</h4>Sales and stock activity is currently recorded under the signed-in workspace, not attributed to individual team members.<h4>Removal</h4>You can remove a team member from the roster at any time.</div>`<button type="button" class="chk2" data-agree role="checkbox" aria-checked="false"><i>${ic('check', 16, 3)}</i><span>I accept the privacy policy and will tell my staff how their details are used.</span></button>`,
         foot: pill('Continue', 'data-n disabled') });
       const c = $('[data-agree]', o.el), n = $('[data-n]', o.el); c.onclick = () => { agree = !agree; c.classList.toggle('on', agree); c.setAttribute('aria-checked', agree); n.disabled = !agree; K.fx('tap'); }; n.onclick = () => agree && who(); };
     const who = () => {
@@ -284,33 +304,29 @@ window.StrapFeatures = (() => {
         foot: pill('Continue', 'data-n') });
       $$('[data-r]', o.el).forEach(r => r.onclick = () => { A.role = r.dataset.r; $$('[data-r]', o.el).forEach(x => x.classList.toggle('on', x === r)); $('#rd', o.el).textContent = ROLES.find(x => x[0] === A.role)[1]; });
       $$('[data-bb]', o.el).forEach(b => b.onclick = () => { if (b.dataset.bb && S.plan === 'free') return gate('Assigning a dedicated staff member to a branch needs a Premium account.'); A.branch = b.dataset.bb || null; $$('[data-bb]', o.el).forEach(x => x.classList.toggle('on', x === b)); });
-      $('[data-n]', o.el).onclick = () => { const i = $('#sn', o.el); A.name = i.value.trim(); if (!A.name) return ferr(i, 'Enter their name.'); if (!A.role) return toast('Choose what they’ll handle'); pin(); };
+      $('[data-n]', o.el).onclick = () => { const i = $('#sn', o.el); A.name = i.value.trim(); if (!A.name) return ferr(i, 'Enter their name.'); if (!A.role) return toast('Choose what they’ll handle'); setup(); };
     };
-    const pin = () => {
-      o.step({ t: 'Create a 6 digit login PIN', s: `${fn()} will use this PIN with their Strap work email to sign in.`, back: who,
-        body: fld('p1', 'Create PIN', { type: 'password', mode: 'numeric', max: 6, cls: 'code8' }) + fld('p2', 'Confirm PIN', { type: 'password', mode: 'numeric', max: 6, cls: 'code8' }), foot: pill('Set up staff', 'data-n disabled') });
-      const a = $('#p1', o.el), b = $('#p2', o.el), n = $('[data-n]', o.el);
-      const chk = () => { const x = digits(a, 6), y = digits(b, 6); n.disabled = !(x && y && a.value === b.value); ferr(b, b.value.length === 6 && a.value !== b.value ? 'The PINs don’t match.' : ''); };
-      a.oninput = chk; b.oninput = chk; n.onclick = () => { if (n.disabled) return; A.pin = a.value; setup(); };
-    };
-    const setup = async () => {
-      o.step({ t: `Setting up ${fn()}`, s: 'Creating their account', noBack: true, body: '<div class="spn"><div class="fx-spin"><i></i><b></b><span></span></div></div>' });
-      for (const m of ['Creating their account', 'Locking in their PIN', 'Choosing a work email']) { const s = $('.ss', o.el); if (!s) return; s.textContent = m; await sleep(1000); }
-      A.email = mailFor(A.name, A.dom); email();
-    };
+    const setup = () => { A.email = ''; email(); };
     const email = () => {
-      o.step({ t: `${fn()}’s work email`, s: `Give this email to ${fn()}. They’ll sign in with it and their 6 digit PIN.`, noBack: true,
-        body: `<div class="fx-mail">${esc(A.email)}</div>`, foot: pill('Finish', 'data-fin') + pill('Adjust email', 'data-ed', 'alt') + pill('Copy email', 'data-cp', 'alt') });
-      $('[data-cp]', o.el).onclick = async () => { try { await navigator.clipboard.writeText(A.email); toast('Email copied'); } catch (er) { toast(A.email); } };
-      $('[data-ed]', o.el).onclick = () => {
-        const sh = K.sheet({ title: 'Adjust email', body: `<p class="fx-p">Change the name part, or use another @business name.</p><label class="pm-fl"><span>Name part</span><input id="e1" value="${esc(A.email.split('@')[0])}" maxlength="30"></label><label class="pm-fl"><span>Business name part (ends in .com)</span><input id="e2" value="${esc(A.dom)}" maxlength="20"></label><button class="pm-add wide" data-ok>Use this email</button>` });
-        sh.body.addEventListener('click', ev => { if (!ev.target.closest('[data-ok]')) return; const a = $('#e1', sh.body).value.toLowerCase().replace(/[^a-z0-9.\-_]/g, ''), d = $('#e2', sh.body).value.toLowerCase().replace(/[^a-z0-9\-]/g, '');
-          if (!a || !d) return bad($('#e1', sh.body).parentNode); if (S.staff.some(x => x.email === `${a}@${d}.com`)) return toast('That email is taken'); A.dom = d; A.email = `${a}@${d}.com`; sh.close(); email(); });
-      };
+      o.step({ t: `${fn()}’s contact details`, s: 'Add a real contact email if you have one. This saves a roster entry only; it does not create a staff login.', back: who,
+        body: fld('se', 'Contact email (optional)', { type: 'email', max: 120, v: A.email }),
+        foot: pill('Save team member', 'data-fin') });
       $('[data-fin]', o.el).onclick = async () => {
-        const salt = Math.random().toString(36).slice(2), st = { id: 's' + Date.now().toString(36), name: A.name, role: A.role, branch: A.branch, email: A.email, salt, pin: await sha(salt + ':' + A.pin), at: Date.now() };
-        await api.createStaff({ ...st, pin: undefined }); S.staff.push(st); save(); notify('staff', 'Staff added', `${st.name} can now sign in as ${st.role}.`);
-        o.ok('Staff added', `${esc(st.name)} can now sign in as ${esc(st.role)}.`, 'Back to staff', home);
+        const email = $('#se', o.el).value.trim().toLowerCase();
+        if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) return ferr($('#se', o.el), 'Enter a valid email address.');
+        const st = { id: 's' + Date.now().toString(36), name: A.name, role: A.role, branch: A.branch, email, at: Date.now() };
+        const btn = $('[data-fin]', o.el); btn.disabled = true;
+        try {
+          await StrapStore.batch(async () => {
+            S.staff.push(st);
+            notify('staff', 'Team member added', `${st.name} was added to your team roster as ${st.role}.`);
+          }, true);
+          o.ok('Team member added', `${esc(st.name)} is saved in your team roster. Individual staff sign-in is not enabled yet.`, 'Back to team roster', home);
+        } catch (error) {
+          S.staff = S.staff.filter(x => x.id !== st.id);
+          btn.disabled = false;
+          toast(error.message || 'Could not save this team member. Please try again.');
+        }
       };
     };
     privacy();
@@ -336,13 +352,25 @@ window.StrapFeatures = (() => {
         const t = ev.target, to = t.closest('[data-to]'), p = t.closest('[data-p]'), q = t.closest('[data-q]');
         if (to) { T.to = to.dataset.to; paint(); } if (p) { T.p = p.dataset.p; T.q = 1; paint(); } if (q) { T.q += +q.dataset.q; paint(); }
         if (!t.closest('[data-go]')) return; sh.close();
-        await cover('Transferring stock', async () => {
-          const from = items(), dest = items(T.to), a = from.find(x => x.id === T.p), b = dest.find(x => x.title === a.title);
-          a.qty -= T.q; if (b) b.qty = (b.qty || 0) + T.q; else dest.push({ ...a, id: 'p' + Date.now().toString(36), qty: T.q });
-          setItems(from); setItems(dest, T.to); const live = ctx.products();
-          if (live) { const arr = live.items(), la = arr.find(x => x.id === T.p); if (la) live.setQty(la.id, a.qty); }
-          S.transfers.unshift({ title: a.title, qty: T.q, from: branch().name, to: branch(T.to).name, at: Date.now() }); save(); notify('stock', 'Stock transferred', `${T.q} × ${a.title} to ${branch(T.to).name}.`);
-        }); K.fx('ok'); draw(); toast('Stock transferred');
+        try {
+          await cover('Transferring stock', async () => {
+            const fromId = S.active, toId = T.to, from = items(fromId), dest = items(toId);
+            const a = from.find(x => x.id === T.p);
+            if (!a || !Number.isInteger(T.q) || T.q < 1 || a.qty < T.q) throw new Error('The stock changed. Refresh this branch and try again.');
+            const b = dest.find(x => x.title === a.title), fromName = branch(fromId).name, toName = branch(toId).name;
+            await StrapStore.batch(async () => {
+              a.qty -= T.q;
+              if (b) b.qty = (b.qty || 0) + T.q;
+              else dest.push({ ...a, id: 'p' + Date.now().toString(36), qty: T.q });
+              await setItems(from, fromId, false);
+              await setItems(dest, toId, false);
+              S.transfers.unshift({ title: a.title, qty: T.q, from: fromName, to: toName, at: Date.now() });
+              notify('stock', 'Stock transferred', `${T.q} × ${a.title} to ${toName}.`);
+            }, true);
+          });
+          window.dispatchEvent(new CustomEvent('strap:remote-data-refreshed', { detail: { sections: ['features','store'] } }));
+          K.fx('ok'); draw(); toast('Stock transferred');
+        } catch (error) { toast(error.message || 'The stock transfer could not be saved.'); }
       });
     });
   };
@@ -492,7 +520,7 @@ window.StrapFeatures = (() => {
         if (t.closest('[data-again]')) intro();
         const rm = t.closest('[data-rm]'); if (rm) { list.splice(+rm.dataset.rm, 1); review(); }
         if (t.closest('[data-imp]')) { const room = lim().products - items().length; if (list.length > room) return gate(`The free plan holds ${LIM.free.products} products. You can add ${Math.max(0, room)} more.`); if (!useImport()) return;
-          const out = list.map((p, i) => ({ id: 'p' + Date.now().toString(36) + i, title: p.title, price: p.price, qty: p.qty, status: 'active', tracked: true })); K.fx('ok'); s.close('Adding products').then(() => { onAdd(out); toast(`${out.length} product${out.length === 1 ? '' : 's'} added`); }); }
+          const out = list.map((p, i) => ({ id: 'p' + Date.now().toString(36) + i, title: p.title, price: p.price, qty: p.qty, status: 'active', tracked: true })); K.fx('ok'); s.close('Adding products').then(async () => { try { await onAdd(out); toast(`${out.length} product${out.length === 1 ? '' : 's'} added`); } catch (error) { toast(error.message || 'Could not save the products. Try again.'); } }); }
       });
       s.el.addEventListener('change', async e => { const f = e.target.files && e.target.files[0]; if (!f) return; const txt = /text|csv|plain/.test(f.type) || /\.(csv|txt)$/i.test(f.name) ? await f.text() : ''; run({ file: f, text: txt }); });
     }));
@@ -503,9 +531,9 @@ window.StrapFeatures = (() => {
     const P = StrapProducts.api, cap = n => { if (items().length + n > lim().products) { gate(`The free plan holds ${LIM.free.products} products. Upgrade for more.`); throw new Error('limit'); } };
     P.getProducts = async () => { await sleep(350); return items(); };
     const sv = P.saveProduct, dl = P.deleteProduct, ic1 = P.importCsv, is1 = P.importFromSite;
-    P.saveProduct = async p => { const l = items(); const isNew = !p.id || !l.some(x => x.id === p.id); if (isNew) cap(1); const r = await sv(p); const i = l.findIndex(x => x.id === r.id); i < 0 ? l.unshift(r) : (l[i] = r); setItems(l); return r; };
-    P.deleteProduct = async id => { const r = await dl(id); setItems(items().filter(x => x.id !== id)); return r; };
-    const imp = fn => async (...a) => { if (!useImport()) throw new Error('limit'); const r = await fn(...a); cap(r.length); setItems([...r, ...items()]); return r; };
+    P.saveProduct = async p => { const l = items().slice(); const isNew = !p.id || !l.some(x => x.id === p.id); if (isNew) cap(1); const r = await sv(p); const i = l.findIndex(x => x.id === r.id); i < 0 ? l.unshift(r) : (l[i] = r); await setItems(l); return r; };
+    P.deleteProduct = async id => { const r = await dl(id); await setItems(items().filter(x => x.id !== id)); return r; };
+    const imp = fn => async (...a) => { if (!useImport()) throw new Error('Import limit reached.'); const r = await fn(...a); cap(r.length); await setItems([...r, ...items()]); return r; };
     P.importCsv = imp(ic1); P.importFromSite = imp(is1);
   }
   wrapProducts();
@@ -515,7 +543,7 @@ window.StrapFeatures = (() => {
     const hourly = Array.from({ length: 12 }, (_, i) => StrapStore.state.payments.filter(p => StrapStore.dayKey(p.ts) === StrapStore.dayKey() && Math.floor(new Date(p.ts).getHours() / 2) <= i).reduce((a, p) => a + p.amount, 0));
     return { revenue: rev, deltaPct: y > 0 ? Math.round((rev - y) / y * 1000) / 10 : null, hourly, sold: ds.items, orders: ds.count, customers: 0, stock: l.reduce((a, p) => a + (+p.qty || 0), 0), products: l.length, low: l.filter(p => p.tracked && (+p.qty || 0) <= 5).length }; };
   const GS = [['product', 'Add your first product', 'Start your catalogue by hand or by import.', 'tag', () => items().length > 0, 'addp'], ['pin', 'Set your activity PIN', 'Protect closing sales and important actions.', 'shield', () => StrapStore.hasPin(), 'pin'],
-    ['sale', 'Make your first sale', 'Open the sales desk and ring up a sale.', 'receipt', () => StrapStore.state.sales.length > 0, 'new-sale'], ['staff', 'Add a staff member', 'Give your team their own login.', 'users', () => S.staff.length > 0, 'staff'],
+    ['sale', 'Make your first sale', 'Open the sales desk and ring up a sale.', 'receipt', () => StrapStore.state.sales.length > 0, 'new-sale'], ['staff', 'Build your team roster', 'Save team members and their responsibilities.', 'users', () => S.staff.length > 0, 'staff'],
     ['2fa', 'Turn on 2FA', 'Add a second step to keep your account safe.', 'lock', () => S.twofa.on, 'security']];
   function mountHome(c, home) {
     ctx = c; bellEl = $('.bell', c.dashEl || document); const anchor = $('.sec', home), box = document.createElement('div'); box.className = 'fx-gs in'; box.style.setProperty('--i', 2);
@@ -527,7 +555,7 @@ window.StrapFeatures = (() => {
       if (k === 'addp') { c.go('products'); setTimeout(() => ctx.products() && ctx.products().openAdd(), 500); } else if (k === 'pin' || k === 'new-sale') c.go(k === 'pin' ? 'settings' : k); else open(k);
     });
   }
-  function bind(prod) { if (prod && prod.onChange) prod.onChange(() => setItems(prod.items())); }
+  function bind(prod) { if (prod && prod.onChange) prod.onChange(() => setItems(prod.items()).catch(error => toast(error.message || 'Could not save product changes.'))); }
 
   const FLOWS = { staff: staffFlow, branchsw: branchFlow, branches: branchFlow };
   function open(key) {

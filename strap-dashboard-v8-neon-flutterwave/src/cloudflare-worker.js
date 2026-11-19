@@ -60,7 +60,11 @@ async function applyRateLimit(binding, key) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    if (!url.pathname.startsWith("/api/")) return env.ASSETS.fetch(request);
+    const dynamicPaths = url.pathname.startsWith("/api/") ||
+      url.pathname.startsWith("/store/") ||
+      url.pathname === "/robots.txt" ||
+      url.pathname === "/sitemap.xml";
+    if (!dynamicPaths) return env.ASSETS.fetch(request);
 
     const ip = request.headers.get("CF-Connecting-IP") || "unknown";
     try {

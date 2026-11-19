@@ -66,6 +66,11 @@ jobs:
           echo "Checking dashboard feature asset"
           curl --fail --show-error --silent "$PREVIEW_URL/features.js?v=20261119-dashboard-fix" -o /tmp/strap-features.js
           grep -q "S.notifs = Array.isArray" /tmp/strap-features.js
+          curl --fail --show-error --silent "$PREVIEW_URL/store-runtime.js" | grep -q "STRAP_PUBLIC_CONTEXT"
+          curl --fail --show-error --silent "$PREVIEW_URL/robots.txt" | grep -q "Sitemap:"
+          curl --fail --show-error --silent "$PREVIEW_URL/sitemap.xml" | grep -q "<urlset"
+          status="$(curl --silent --output /dev/null --write-out "%{http_code}" "$PREVIEW_URL/store/strap-preview-healthcheck")"
+          test "$status" = "404"
           curl --fail --show-error --silent "$PREVIEW_URL/api/config" | grep -q '"emailProvider":"Neon Auth"'
           curl --fail --show-error --silent "$PREVIEW_URL/script.js" | grep -q '0x4AAAAAAGIY0URD6s_Mg1m1'
           status="$(curl --silent --output /dev/null --write-out "%{http_code}" -X POST -H 'Content-Type: application/json' -d '{}' "$PREVIEW_URL/api/auth/register")"

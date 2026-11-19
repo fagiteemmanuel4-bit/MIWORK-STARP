@@ -233,7 +233,7 @@ window.StrapProducts = (() => {
         <div class="pm-grab"><i></i></div>
         <div class="pm-view" data-v="main">
           <div class="pm-sh"><h2>Import products</h2><button type="button" class="pm-x" data-close aria-label="Close">${ic('close', 20, 2.2)}</button></div>
-          <button type="button" class="pm-opt" data-o="csv"><span class="pm-oi">${ic('csv', 24)}</span><span class="pm-ot"><b>Import via CSV</b><small>Accepts .csv, .txt and .xls</small></span>${ic('chevR', 20, 2)}</button>
+          <button type="button" class="pm-opt" data-o="csv"><span class="pm-oi">${ic('csv', 24)}</span><span class="pm-ot"><b>Import via CSV</b><small>Accepts .csv and .txt up to 5 MB</small></span>${ic('chevR', 20, 2)}</button>
           <button type="button" class="pm-opt" data-o="sites"><span class="pm-oi">${ic('globe', 24)}</span><span class="pm-ot"><b>Import from a website</b><small>Bring your catalogue from another store</small></span>${ic('chevR', 20, 2)}</button>
         </div>
         <div class="pm-view" data-v="sites" hidden>
@@ -247,7 +247,7 @@ window.StrapProducts = (() => {
     function openSheet() { showView('main'); sheet.style.transform = ''; sheetWrap.hidden = false; document.body.classList.add('pm-open'); void sheet.offsetWidth; sheetWrap.classList.add('on'); }
     function closeSheet(keepLock) { sheetWrap.classList.remove('on'); if (!keepLock) document.body.classList.remove('pm-open'); setTimeout(() => { if (!sheetWrap.classList.contains('on')) sheetWrap.hidden = true; }, 380); }
     const openImport = openSheet;
-    const openAI = () => StrapFeatures.aiImport(list => { items = [...list, ...items]; renderAll(); StrapFeatures.setItems(items); });
+    const openAI = () => StrapFeatures.aiImport(async list => { items = [...list, ...items]; await StrapFeatures.setItems(items); renderAll(); });
     sheetWrap.addEventListener('click', e => {
       if (e.target.closest('.pm-scrim') || e.target.closest('[data-close]')) return closeSheet();
       if (e.target.closest('[data-back]')) return showView('main');
@@ -296,47 +296,69 @@ window.StrapProducts = (() => {
     // ----- CSV import -----
     function csvPicker() {
       fOpen(`${top()}<div class="fl-body"><div class="fl-hero">${U.illus('csv')}</div><h1>Import via CSV</h1><p class="fl-sub">Upload a spreadsheet from your old store, or a file you prepared yourself.</p>
-        <label class="fl-drop"><input type="file" accept=".csv,.txt,.xls,.xlsx" hidden><span class="fl-dico">${ic('upload', 28, 1.8)}</span><b>Choose a file</b><small>or drag and drop it here</small></label>
-        <p class="fl-fm">Accepts .csv, .txt and .xls</p>
+        <label class="fl-drop"><input type="file" accept=".csv,.txt" hidden><span class="fl-dico">${ic('upload', 28, 1.8)}</span><b>Choose a file</b><small>or drag and drop it here</small></label>
+        <p class="fl-fm">Accepts .csv and .txt files up to 5 MB</p>
         <ul class="fl-tips"><li>${ic('check', 16, 2.6)}<span>A <b>Title</b> column is required</span></li><li>${ic('check', 16, 2.6)}<span>Optional: Price, Quantity, Status, SKU, Image</span></li></ul>
         <button type="button" class="pm-ghost fl-link" data-a="sample">${ic('download', 18, 2)} Download sample CSV</button></div>`);
       A.file = csvRun;
       A.sample = () => download(new Blob(['Title,Price,Quantity,Status,SKU\r\nCanvas Pencil Case,2500,24,active,CPC-01\r\nFoam Exercise Mat,14000,9,draft,FEM-02\r\n'], { type: 'text/csv' }), 'strap-sample.csv');
     }
     async function csvRun(file) {
-      if (!file) return; const my = tok, ext = (file.name.split('.').pop() || '').toLowerCase(); let res = { ok: [], skipped: 0 }, err = null;
-      if (ext === 'xls' || ext === 'xlsx') err = ['Spreadsheet files aren’t supported yet', 'Save your file as .csv (Save as → CSV) and upload it again.'];
-      else { try { res = csvToProducts(await file.text()); } catch (e) { err = ['We couldn’t read that file', 'Make sure it’s a plain CSV or text file and try again.']; } if (!err && !res.ok.length) err = ['No products found', 'We couldn’t find a Title column, or every row was empty. Check the sample file for the format.']; }
-      if (err) { fSet(errScreen(err[0], err[1], 'Try another file')); A.retry = csvPicker; return; }
-      fSet(progScreen('Importing your products', file.name, ['Reading your file', 'Checking columns', 'Matching products', 'Adding to your store']));
-      const total = res.ok.length, saved = api.importCsv(res.ok);
-      if (!(await run(my, total, Math.min(6500, 2400 + total * 30)))) return;
+      if (!file) return;
+      const my = tok, ext = (file.name.split('.').pop() || '').toLowerCase();
+      let res = { ok: [], skipped: 0 };
       try {
-        const list = await saved; items = [...list, ...items]; renderAll();
-        fSet(doneScreen(`${list.length} product${list.length === 1 ? '' : 's'} imported`, res.skipped ? 'Some rows had no title, so we skipped them.' : 'They’re in your catalogue now. Tap any product to edit it.', [[list.length, 'Imported'], [res.skipped, 'Skipped']], 'View products')); A.done = fClose;
-      } catch (e) { fSet(errScreen('Import failed', 'Something went wrong while saving your products.', 'Try again')); A.retry = csvPicker; }
+        if (file.size > 5 * 1024 * 1024) throw new Error('This file is larger than 5 MB. Split it into smaller CSV files and try again.');
+        if (ext === 'xls' || ext === 'xlsx') throw new Error('Excel workbooks are not supported yet. Export the sheet as CSV and upload it again.');
+        const text = await Promise.race([
+          file.text(),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Reading this file took too long. Try saving it as a standard CSV.')), 15000))
+        ]);
+        res = csvToProducts(text);
+        if (!res.ok.length) throw new Error('We couldn’t find any products. Check that the first row contains a Title or Product Name column.');
+        fSet(progScreen('Importing your products', file.name, ['Reading your file', 'Checking columns', 'Matching products', 'Adding to your store']));
+        const total = res.ok.length;
+        if (!(await run(my, total, Math.min(5000, 1800 + total * 20)))) return;
+        const list = await api.importCsv(res.ok);
+        if (my !== tok) return;
+        items = [...list, ...items];
+        renderAll();
+        fSet(doneScreen(`${list.length} product${list.length === 1 ? '' : 's'} imported`, res.skipped ? 'Some rows had no title, so we skipped them.' : 'Your products are saved to your Strap workspace. You can now edit them or start selling.', [[list.length, 'Imported'], [res.skipped, 'Skipped']], 'View products'));
+        A.done = fClose;
+      } catch (error) {
+        if (my !== tok) return;
+        fSet(errScreen('Import failed', error.message || 'We couldn’t save your products. Check your connection and try again.', 'Try another file'));
+        A.retry = csvPicker;
+      }
     }
 
     // ----- website import -----
     function siteConnect(s) {
-      let addr = '';
-      fOpen(`${top()}<div class="fl-body"><div class="fl-hero sm">${fav(s, 84)}</div><h1>Import from ${s[0]}</h1><p class="fl-sub">Enter your ${s[0]} store address and we’ll bring your catalogue across.</p>
-        <label class="pm-fl"><span>Store address</span><input data-addr type="text" inputmode="url" autocapitalize="none" autocomplete="off" placeholder="${s[3]}"></label>
-        <p class="fl-note">${ic('lock', 16, 2)}<span>We only read your product catalogue. Nothing on ${s[0]} is changed.</span></p>
-        <button type="button" class="pm-add fl-cta" data-a="go" disabled>Connect store</button></div>`);
-      const go = $('[data-a=go]', flow);
-      A.addr = v => { addr = v.trim(); go.disabled = addr.length < 3; };
-      A.go = () => siteRun(s, addr);
+      fOpen(`${top()}<div class="fl-body"><div class="fl-hero sm">${fav(s, 84)}</div><h1>${s[0]} import</h1>
+        <p class="fl-sub">The direct ${s[0]} connector is not enabled in this Strap build yet. Your existing catalogue is safe.</p>
+        <div class="fl-note">${ic('lock', 16, 2)}<span>Use the CSV importer now. Export your products from ${s[0]} as CSV, then upload that file into Strap.</span></div>
+        <button type="button" class="pm-add fl-cta" data-a="csvnow">Import a CSV instead</button><button type="button" class="pm-ghost fl-cta2" data-fclose>Cancel</button></div>`);
+      A.csvnow = () => { fClose(); setTimeout(csvPicker, 380); };
     }
     async function siteRun(s, addr) {
       const my = tok;
-      fSet(progScreen(`Importing from ${s[0]}`, esc(addr), [`Connecting to ${s[0]}`, 'Finding your products', 'Copying photos and prices', 'Adding to your store']));
-      let list = []; const call = api.importFromSite(s[0].toLowerCase(), addr).then(r => list = r).catch(() => null);
-      const rp = run(my, 0, 5200);
-      const [ok] = await Promise.all([rp, call]); if (!ok) return;
-      if (!list.length) { fSet(errScreen('No products found', `We connected to ${s[0]} but couldn’t find any products to import.`, 'Try another address')); A.retry = () => siteConnect(s); return; }
-      items = [...list, ...items]; renderAll();
-      fSet(doneScreen(`${list.length} products imported`, `Your ${s[0]} catalogue is now in Strap.`, [[list.length, 'Imported'], [0, 'Skipped']], 'View products')); A.done = fClose;
+      fSet(progScreen(`Connecting to ${s[0]}`, esc(addr), ['Checking connection', 'Checking import support']));
+      try {
+        const result = await api.importFromSite(s[0].toLowerCase(), addr);
+        if (my !== tok) return;
+        if (result && result.ok === false) throw new Error(result.msg || 'This marketplace connector is not available yet.');
+        if (!Array.isArray(result) || !result.length) throw new Error('No importable products were returned by this marketplace.');
+        const list = result;
+        items = [...list, ...items];
+        await StrapFeatures.setItems(items);
+        renderAll();
+        fSet(doneScreen(`${list.length} products imported`, `Your ${s[0]} catalogue is now saved in Strap.`, [[list.length, 'Imported'], [0, 'Skipped']], 'View products'));
+        A.done = fClose;
+      } catch (error) {
+        if (my !== tok) return;
+        fSet(errScreen('Marketplace import unavailable', error.message || 'This external marketplace connector is not active yet. You can import your catalogue using CSV instead.', 'Try another method'));
+        A.retry = csvPicker;
+      }
     }
 
     // ----- export -----
@@ -384,10 +406,12 @@ window.StrapProducts = (() => {
           <p class="pm-lb">Media</p>
           <div class="pm-drop">
             <div class="pm-thumbs" hidden></div>
-            <div class="pm-dacts"><button type="button" class="pm-pill" data-upload>Upload new</button><button type="button" class="pm-ghost" data-existing>Select existing</button></div>
-            <small>Accepts images, videos, or 3D models</small>
+            <div class="pm-dacts"><button type="button" class="pm-pill" data-upload>Preview a file</button><button type="button" class="pm-ghost" data-existing>Select existing</button></div>
+            <small>Local files are preview-only on this account. To save and publish an image, add a permanent HTTPS image URL below.</small>
             <input type="file" accept="image/*,video/*,.glb,.gltf" multiple hidden data-file>
           </div>
+          <label class="pm-fl" style="margin-top:12px"><span>Public image URL</span><input name="imageUrl" type="url" inputmode="url" placeholder="https://images.example.com/product.jpg" autocomplete="url"></label>
+          <p class="pm-hint">Use a publicly accessible HTTPS image URL. Cloud image uploads are not enabled on this preview account yet.</p>
           <p class="pm-lb">Category</p>
           <label class="pm-fl sel"><select name="category"><option value="">Choose a product category</option>${CATEGORIES.map(c => `<option>${c}</option>`).join('')}</select>${ic('chevUD', 18, 2)}</label>
           <p class="pm-hint">Helps organise your catalogue and makes search and filters work better.</p>
@@ -583,7 +607,7 @@ window.StrapProducts = (() => {
       set('price', p.price); set('compare', p.compareAt); set('cost', p.cost); set('unit', p.unitPrice); set('qty', p.qty);
       set('len', p.size && p.size.l); set('wid', p.size && p.size.w); set('hei', p.size && p.size.h); set('dunit', p.size && p.size.unit);
       set('wt', p.weight && p.weight.v); set('wunit', p.weight && p.weight.unit);
-      set('seoTitle', p.seo && p.seo.title); set('seoDesc', p.seo && p.seo.description);
+      set('seoTitle', p.seo && p.seo.title); set('seoDesc', p.seo && p.seo.description); set('imageUrl', p.image);
       $('.pm-ed', page).innerHTML = p.description || '';
       const rv = (k, show) => { const f = $(`[data-f="${k}"]`, page), c = $(`.pm-chip[data-reveal="${k}"]`, page); if (f) f.hidden = !show; if (c) c.classList.toggle('on', show); };
       rv('cmp', !!p.compareAt); rv('unit', !!p.unitPrice); rv('cost', !!p.cost); rv('sku', !!p.sku); rv('barcode', !!p.barcode); rv('origin', !!p.origin); rv('hs', !!p.hs);
@@ -608,6 +632,12 @@ window.StrapProducts = (() => {
       const title = form.title.value.trim();
       if (!title) { form.title.focus(); form.title.closest('.pm-fl').classList.add('bad'); setTimeout(() => form.title.closest('.pm-fl').classList.remove('bad'), 900); return toast('Add a product title first'); }
       const g = n => form[n] ? form[n].value : '';
+      const imageUrl = g('imageUrl').trim();
+      if (imageUrl && !/^https:\/\/[^\s"'<>]+$/i.test(imageUrl)) return toast('Use a publicly accessible HTTPS image URL.');
+      const localOnlyFiles = files.filter(f => f.file || /^blob:/i.test(f.url || ''));
+      if (localOnlyFiles.length && !imageUrl) return toast('This preview has no cloud media storage yet. Add a permanent HTTPS image URL or remove the local file before saving.');
+      const publicFiles = files.filter(f => /^https?:\/\//i.test(f.url || '')).map(({ name, type, url }) => ({ name, type, url }));
+      if (imageUrl && !publicFiles.some(f => f.url === imageUrl)) publicFiles.unshift({ name: 'Product image', type: 'image/url', url: imageUrl });
       const product = {
         id: editing ? editing.id : undefined,
         title, description: $('.pm-ed', page).innerHTML, category: g('category'), price: +g('price') || 0, compareAt: +g('compare') || null, cost: +g('cost') || null, unitPrice: g('unit'),
@@ -616,33 +646,37 @@ window.StrapProducts = (() => {
         physical: $('[data-sw=physical]', page).classList.contains('on'), package: g('package'),
         size: { l: g('len'), w: g('wid'), h: g('hei'), unit: g('dunit') }, weight: { v: g('wt'), unit: g('wunit') }, origin: g('origin'), hs: g('hs'),
         options: $$('.pm-opt2', page).map(o => ({ name: $('[data-on]', o).value.trim(), values: $('[data-ov]', o).value.split(',').map(s => s.trim()).filter(Boolean) })).filter(o => o.name && o.values.length),
-        seo: { title: g('seoTitle'), description: g('seoDesc') }, status: g('status'), type: g('type'), vendor: g('vendor'), layout: g('layout'),
+        seo: { title: g('seoTitle'), description: g('seoDesc') }, image: imageUrl || (publicFiles.find(f => f.type.startsWith('image')) || {}).url || '', files: publicFiles,
+        status: g('status'), type: g('type'), vendor: g('vendor'), layout: g('layout'),
         collections: $$('[data-tags=collections] .pm-tag > span', page).map(x => x.textContent), tags: $$('[data-tags=tags] .pm-tag > span', page).map(x => x.textContent)
       };
       const btn = $('[data-save]', page), idle = editing ? 'Save changes' : 'Save product'; btn.disabled = true; btn.textContent = 'Saving…';
       try {
         const saved = await api.saveProduct({ ...product, media: files.map(f => f.file).filter(Boolean) });
-        const rec = { ...product, id: saved.id, image: (files.find(f => f.type.startsWith('image')) || {}).url || '', files: files.map(({ name, type, url }) => ({ name, type, url })) };
+        const rec = { ...product, id: saved.id };
         if (editing) { const i = items.findIndex(x => x.id === editing.id); if (i > -1) items[i] = rec; } else items.unshift(rec);
         renderAll(); closePage(); toast(editing ? 'Changes saved' : 'Product added');
-      } catch (err) { toast('Could not save. Try again.'); }
+      } catch (err) { toast(err.message || 'Could not save. Check your connection and try again.'); }
       btn.disabled = false; btn.textContent = idle;
     }
 
     // ----- boot -----
     renderAll();
+    const syncRemoteProducts = () => { items = StrapFeatures.items(); loading = false; renderAll(); };
+    window.addEventListener('strap:state-restored', syncRemoteProducts);
+    window.addEventListener('strap:remote-data-refreshed', syncRemoteProducts);
     api.getProducts().then(r => { items = r; loading = false; renderAll(); }).catch(() => { items = []; loading = false; renderAll(); });
     return {
       items: () => items, openAdd: () => openPage(), openImport, openAI,
       countIn: name => items.filter(p => (p.collections || []).includes(name)).length,
       inCollection: name => items.filter(p => (p.collections || []).includes(name)).map(p => p.id),
-      setCollection(name, ids) {
+      async setCollection(name, ids, persist = true) {
         const want = new Set(ids);
-        items.forEach(p => { const has = (p.collections || []).includes(name), on = want.has(p.id); if (on && !has) p.collections = [...(p.collections || []), name]; if (!on && has) p.collections = p.collections.filter(x => x !== name); });
-        renderAll();
+        const next = items.map(p => { const current = p.collections || [], has = current.includes(name), on = want.has(p.id); return { ...p, collections: on && !has ? [...current, name] : !on && has ? current.filter(x => x !== name) : current }; });
+        await StrapFeatures.setItems(next, undefined, persist); items = StrapFeatures.items(); renderAll();
       },
-      dropCollection(name) { items.forEach(p => { if ((p.collections || []).includes(name)) p.collections = p.collections.filter(x => x !== name); }); renderAll(); },
-      setQty(id, qty) { const p = items.find(x => x.id === id); if (p) { p.qty = Math.max(0, qty); renderBody(); } return p; },
+      async dropCollection(name, persist = true) { const next = items.map(p => ({ ...p, collections: (p.collections || []).filter(x => x !== name) })); await StrapFeatures.setItems(next, undefined, persist); items = StrapFeatures.items(); renderAll(); },
+      async setQty(id, qty, persist = true) { const current = items.find(x => x.id === id); if (!current) return null; const next = items.map(p => p.id === id ? { ...p, qty: Math.max(0, qty) } : p); await StrapFeatures.setItems(next, undefined, persist); items = StrapFeatures.items(); renderBody(); return items.find(x => x.id === id); },
       onChange(fn) { subs.push(fn); }
     };
   }

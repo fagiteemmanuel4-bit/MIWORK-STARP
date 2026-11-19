@@ -50,7 +50,13 @@ window.StrapSec = (() => {
         if (busy || val.length >= 4 || S.lockLeft()) return;
         val += d; paint(); fx('tap');
         if (val.length < 4) return;
-        busy = true; const ok = await S.checkPin(val);
+        busy = true;
+        let ok;
+        try { ok = await S.checkPin(val); }
+        catch (error) {
+          busy = false; val = ''; paint(); err.textContent = error.message || 'We could not verify your PIN. Check your connection and try again.';
+          startLock(); return;
+        }
         if (ok) { S.pinOk(); fx('ok'); dots.forEach(x => x.classList.add('ok')); await sleep(260); close('ok'); return; }
         S.pinFail(); fx('err'); w.classList.add('bad'); dots.forEach(x => x.classList.add('x')); err.textContent = 'That PIN isn’t right. Try again.';
         await sleep(520); w.classList.remove('bad'); dots.forEach(x => x.classList.remove('x')); val = ''; paint(); busy = false; startLock();
@@ -114,8 +120,10 @@ window.StrapSec = (() => {
           if (WEAK.includes(a.value)) { ea.textContent = 'That PIN is too easy to guess. Try something less obvious.'; return; }
           if (!okB) { eb.textContent = 'The PINs don’t match.'; return; }
           pin = a.value; btn.disabled = true; btn.textContent = 'Sending code…';
-          const r = await S.api.sendCode(email);
-          if (!r.ok) { btn.disabled = false; btn.textContent = 'Continue'; eb.textContent = 'We couldn’t send a code. Try again.'; return; }
+          let r;
+          try { r = await S.api.sendCode(email); }
+          catch (error) { r = { ok: false, msg: error.message }; }
+          if (!r?.ok) { btn.disabled = false; btn.textContent = 'Continue'; eb.textContent = r?.msg || 'We couldn’t send a code. Try again.'; return; }
           stepCode();
         });
         swap(f);
@@ -134,7 +142,17 @@ window.StrapSec = (() => {
         const val = () => boxes.map(b => b.value).join('');
         const start = () => { let s = 30; rs.disabled = true; stop(); const tick = () => { note.textContent = s > 0 ? `You can resend in ${s}s` : 'Didn’t get it?'; if (s-- <= 0) { stop(); rs.disabled = false; } }; tick(); timer = setInterval(tick, 1000); };
         start();
-        rs.onclick = async () => { await S.api.sendCode(email); boxes.forEach(b => b.value = ''); boxes[0].focus(); btn.disabled = true; start(); StrapKit.$('#toast') && toastMsg('New code sent'); };
+        rs.onclick = async () => {
+          if (rs.disabled) return;
+          rs.disabled = true; rs.textContent = 'Sending…'; err.textContent = '';
+          let result;
+          try { result = await S.api.sendCode(email); }
+          catch (error) { result = { ok: false, msg: error.message }; }
+          rs.textContent = 'Resend code';
+          if (!result?.ok) { err.textContent = result?.msg || 'We could not resend the code. Try again.'; rs.disabled = false; return; }
+          boxes.forEach(b => b.value = ''); boxes[0].focus(); btn.disabled = true; start();
+          toastMsg('New verification code sent. Check your inbox and spam folder.');
+        };
         boxes.forEach((b, i) => {
           b.addEventListener('input', () => { b.value = b.value.replace(/\D/g, '').slice(-1); err.textContent = ''; if (b.value && i < 5) boxes[i + 1].focus(); btn.disabled = val().length < 6; if (val().length === 6) f.requestSubmit(); });
           b.addEventListener('keydown', e => { if (e.key === 'Backspace' && !b.value && i > 0) boxes[i - 1].focus(); });
@@ -143,10 +161,14 @@ window.StrapSec = (() => {
         f.addEventListener('submit', async e => {
           e.preventDefault(); if (val().length < 6 || btn.disabled && btn.dataset.busy) return;
           btn.disabled = true; btn.dataset.busy = 1; btn.textContent = 'Verifying…';
-          const r = await S.api.verifyCode(email, val());
-          if (!r.ok) { btn.dataset.busy = ''; btn.textContent = 'Verify and save PIN'; boxes.forEach(b => b.value = ''); boxes[0].focus(); err.textContent = 'That code isn’t right. Check it and try again.'; return; }
-          const saved = await S.setPin(pin);
-          if (!saved.ok) { btn.dataset.busy = ''; btn.disabled = false; btn.textContent = 'Verify and save PIN'; err.textContent = 'We couldn’t save your PIN. Try again.'; return; }
+          let r;
+          try { r = await S.api.verifyCode(email, val()); }
+          catch (error) { r = { ok: false, msg: error.message }; }
+          if (!r?.ok) { btn.dataset.busy = ''; btn.disabled = false; btn.textContent = 'Verify and save PIN'; boxes.forEach(b => b.value = ''); boxes[0].focus(); err.textContent = r?.msg || 'That code isn’t right. Check it and try again.'; return; }
+          let saved;
+          try { saved = await S.setPin(pin); }
+          catch (error) { saved = { ok: false, msg: error.message }; }
+          if (!saved?.ok) { btn.dataset.busy = ''; btn.disabled = false; btn.textContent = 'Verify and save PIN'; err.textContent = saved?.msg || 'We couldn’t save your PIN. Try again.'; return; }
           stop(); fx('ok');
           // loader again, then roll back to whatever they were doing
           await cover('PIN saved. Taking you back', 1700, () => { layer.remove(); });

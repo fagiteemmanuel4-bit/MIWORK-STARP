@@ -42,31 +42,60 @@
         console.warn('Neon Auth token not needed for this public request:', error.message);
       }
     }
-    const response = await fetch(url, {
-      ...options,
-      credentials: 'same-origin',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
-        ...(options.headers || {})
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 20000);
+    try {
+      const response = await fetch(url, {
+        ...options,
+        signal: options.signal || controller.signal,
+        credentials: 'same-origin',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+          ...(options.headers || {})
+        }
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const error = new Error(payload.message || `Request failed (${response.status})`);
+        error.status = response.status;
+        error.code = payload.code || '';
+        error.payload = payload;
+        throw error;
       }
-    });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      const error = new Error(payload.message || `Request failed (${response.status})`);
-      error.status = response.status;
-      error.payload = payload;
+      return payload;
+    } catch (error) {
+      if (error?.name === 'AbortError') throw new Error('This request took too long. Check your connection and try again.');
+      if (error instanceof TypeError) throw new Error('Could not reach Strap. Check your connection and try again.');
       throw error;
-    }
-    return payload;
+    } finally { clearTimeout(timeout); }
   };
+  const writeQueues = new Map();
   const data = {
     get(key, fallback) { return Object.prototype.hasOwnProperty.call(state.data, key) ? state.data[key] : fallback; },
     async set(key, value) {
-      const result = await request('/api/data', { method: 'PUT', body: JSON.stringify({ data: { [key]: value } }) });
-      state.data[key] = value;
-      return result;
+      return data.setMany({ [key]: value });
     },
+    async setMany(values) {
+      if (!values || typeof values !== 'object' || Array.isArray(values)) throw new Error('A data object is required.');
+      const keys = Object.keys(values);
+      if (!keys.length) return { ok: true };
+      const previous = Promise.all(keys.map(key => (writeQueues.get(key) || Promise.resolve()).catch(() => {})));
+      const next = previous.then(async () => {
+        const result = await request('/api/data', { method: 'PUT', body: JSON.stringify({ data: values }) });
+        Object.assign(state.data, values);
+        return result;
+      });
+      keys.forEach(key => writeQueues.set(key, next));
+      try { return await next; }
+      catch (error) {
+        window.dispatchEvent(new CustomEvent('strap:persistence-error', { detail: { keys, message: error.message } }));
+        throw error;
+      } finally {
+        keys.forEach(key => { if (writeQueues.get(key) === next) writeQueues.delete(key); });
+      }
+    },
+    async flush() { await Promise.all([...writeQueues.values()]); },
     all() { return state.data; }
   };
   state.ready = (async () => {
@@ -99,6 +128,12 @@
       const saved = state.user ? await request('/api/data') : { data: {} };
       state.data = saved.data || {};
       return state;
+    },
+    async refreshData() {
+      if (!state.user) throw new Error('Sign in to refresh your store data.');
+      const saved = await request('/api/data');
+      state.data = saved.data || {};
+      return state.data;
     },
     async logout() {
       try { await window.StrapNeonAuth?.client?.signOut(); }

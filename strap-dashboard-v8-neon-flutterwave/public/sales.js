@@ -75,7 +75,7 @@ window.StrapSales = (() => {
       if (S.prefs.creditReminders && dues.length) {
         due.hidden = false;
         const over = dues.filter(x => S.credits.daysLeft(x) < 0).length;
-        due.innerHTML = `<span class="sx-due-ic">${ic('clock', 20, 2)}</span><span><b>${plural(dues.length, 'credit')} ${over ? `overdue or due soon` : 'due soon'}</b><small>${money(dues.reduce((a, x) => a + S.credits.balance(x), 0))} to collect. Tap to remind customers.</small></span>${ic('chevR', 18, 2)}`;
+        due.innerHTML = `<span class="sx-due-ic">${ic('clock', 20, 2)}</span><span><b>${plural(dues.length, 'credit')} ${over ? `overdue or due soon` : 'due soon'}</b><small>${money(dues.reduce((a, x) => a + S.credits.balance(x), 0))} to collect. Tap to contact customers manually.</small></span>${ic('chevR', 18, 2)}`;
       } else due.hidden = true;
     }
     function rowHtml(p) {
@@ -134,7 +134,7 @@ window.StrapSales = (() => {
         <div class="sx-total"><span>Total</span><b>${money(total)}</b></div>
         <p class="sx-lbl">How is the customer paying?</p>
         <div class="sx-pay" role="radiogroup">${PAY.map(([k, l, i]) => `<button type="button" role="radio" aria-checked="${draft.method === k}" class="sx-pm${draft.method === k ? ' on' : ''}" data-m="${k}">${ic(i, 22, 1.8)}<span>${l}</span></button>`).join('')}</div>
-        ${credit ? `<div class="sx-credit"><p class="sx-note">${ic('info', 18, 2)}<span>We’ll remind you when this is due so you can contact the customer, and we’ll track what they still owe.</span></p>
+        ${credit ? `<div class="sx-credit"><p class="sx-note">${ic('info', 18, 2)}<span>We’ll highlight this due date in your Credit Book so you can contact the customer. Strap does not send automatic reminders yet.</span></p>
           <label class="pm-fl"><span>Customer name *</span><input data-f="name" type="text" autocomplete="off" placeholder="e.g. Ada Okafor" value="${esc(draft.name)}"></label>
           <label class="pm-fl"><span>Phone number *</span><input data-f="phone" type="tel" inputmode="tel" autocomplete="off" placeholder="e.g. 0803 000 0000" value="${esc(draft.phone)}"></label>
           <label class="pm-fl"><span>Email (optional)</span><input data-f="email" type="email" inputmode="email" autocomplete="off" placeholder="name@example.com" value="${esc(draft.email)}"></label>
@@ -187,11 +187,25 @@ window.StrapSales = (() => {
         cashier: ctx.store.name || '', customer: credit ? { name: draft.name.trim(), phone: draft.phone.trim(), email: draft.email.trim() } : null,
         paidNow: credit ? deposit : total, due: credit ? draft.due : ''
       };
-      // stock comes off as soon as the sale is recorded
-      sale.lines.forEach(l => { const p = prod(l.id); if (p && p.tracked) P().setQty(p.id, p.qty - l.qty); });
-      S.addSale(sale);
-      if (credit) { const c = S.addCredit({ saleId: sale.id, no: sale.no, customer: sale.customer, total, due: draft.due }); if (deposit > 0) S.payCredit(c.id, deposit); }
-      else S.addPayment({ amount: total, saleId: sale.id, method: draft.method, type: 'sale' });
+      // Commit the sale ledger and all stock deductions to Neon in one account-data write.
+      try {
+        await S.batch(async () => {
+          for (const line of sale.lines) {
+            const p = prod(line.id);
+            if (p && p.tracked) await P().setQty(p.id, p.qty - line.qty, false);
+          }
+          S.addSale(sale);
+          if (credit) {
+            const c = S.addCredit({ saleId: sale.id, no: sale.no, customer: sale.customer, total, due: draft.due });
+            if (deposit > 0) S.payCredit(c.id, deposit);
+          } else S.addPayment({ amount: total, saleId: sale.id, method: draft.method, type: 'sale' });
+        }, true);
+      } catch (error) {
+        btn.disabled = false;
+        if (er) er.textContent = error.message || 'We could not save this sale. No receipt was created. Please retry.';
+        fx('err');
+        return;
+      }
       cart = []; draft = { method: 'cash', name: '', phone: '', email: '', due: '', paid: '' };
       cartSheet.close(); redrawAll(); fx('ok'); showDone(sale);
     }
@@ -201,7 +215,7 @@ window.StrapSales = (() => {
       const sh = sheet({ title: '', cls: 'sx-ok', body: `<div class="sx-okb"><div class="fl-ok"><svg viewBox="0 0 120 120" aria-hidden="true"><circle class="rg" cx="60" cy="60" r="52" pathLength="200"/><path class="ck" d="M38 62l16 16 30-34" pathLength="200"/></svg></div>
         <h2>${credit ? 'Credit sale recorded' : 'Sale completed'}</h2><b class="sx-big">${money(sale.total)}</b>
         <p class="sx-meta">${esc(sale.no)} · ${esc(R.METHOD[sale.method])} · ${plural(StrapStore.lineCount(sale), 'item')}</p>
-        ${credit ? `<p class="sx-pill">${ic('clock', 16, 2)} ${esc(sale.customer.name)} owes ${money(sale.total - sale.paidNow)}. Reminder set for ${dmy(new Date(sale.due + 'T00:00:00'))}</p>` : ''}
+        ${credit ? `<p class="sx-pill">${ic('clock', 16, 2)} ${esc(sale.customer.name)} owes ${money(sale.total - sale.paidNow)}. Payment due on ${dmy(new Date(sale.due + 'T00:00:00'))}</p>` : ''}
         <div class="sx-acts col"><button type="button" class="pm-add wide" data-rc>${ic('receipt', 20, 2)} View receipt</button><button type="button" class="pm-imp wide" data-nx>Next sale</button></div></div>` });
       sh.body.addEventListener('click', e => { if (e.target.closest('[data-rc]')) { sh.close(); setTimeout(() => receiptSheet(sale), 260); } if (e.target.closest('[data-nx]')) sh.close(); });
     }

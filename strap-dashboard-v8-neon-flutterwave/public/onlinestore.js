@@ -9,12 +9,26 @@ window.StrapOnline = (() => {
   const products = () => { try { return StrapFeatures.items() || []; } catch (e) { return []; } };
   const activeCount = c => F.catalog(c, products()).length;
   const slug = s => String(s || '').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 30);
-  const url = c => c.domain.type === 'custom' && c.domain.status !== 'live' ? (c.domain.temp || c.domain.host) : c.domain.host;
+  const url = c => location.host + '/store/' + encodeURIComponent(c.domain?.slug || slug(c.name));
   const ago = t => { const m = Math.max(1, Math.round((Date.now() - t) / 6e4)); return m < 60 ? m + ' min ago' : m < 1440 ? Math.round(m / 60) + ' hr ago' : Math.round(m / 1440) + ' d ago'; };
   const copy = async t => { try { await navigator.clipboard.writeText(t); } catch (e) { const a = document.createElement('textarea'); a.value = t; document.body.appendChild(a); a.select(); try { document.execCommand('copy'); } catch (_) {} a.remove(); } };
   const rand = n => Array.from(crypto.getRandomValues(new Uint8Array(n)), b => 'abcdefghjkmnpqrstuvwxyz23456789'[b % 31]).join('');
   const toast = m => CTX && CTX.toast(m);
-  const save = c => { S.setOnline(c); refresh(); };
+  let saveTimer = null, latestSaveConfig = null, saveResolvers = [];
+  const save = c => {
+    latestSaveConfig = c;
+    const promise = new Promise(resolve => saveResolvers.push(resolve));
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(async () => {
+      const config = latestSaveConfig, resolvers = saveResolvers.splice(0);
+      latestSaveConfig = null; saveTimer = null;
+      let ok = false;
+      try { await S.setOnline(config); ok = true; }
+      catch (error) { toast(error.message || 'Could not save your store settings. Check your connection and try again.'); }
+      resolvers.forEach(resolve => resolve(ok));
+    }, 350);
+    return promise;
+  };
 
   /* ---------- loading screen that rolls out the next screen ---------- */
   async function cover(msg, fn) {
@@ -92,7 +106,7 @@ window.StrapOnline = (() => {
       const foot = (label, extra = '', dis = false) => `<div class="os-foot">${extra}<button type="button" class="os-pill" data-act="next" ${dis ? 'disabled' : ''}>${label}</button></div>`;
       const customHost = () => D.custom.replace(/^https?:\/\//i, '').replace(/^www\./i, '').replace(/\/.*$/, '').trim().toLowerCase();
       const okCustom = () => /^(?!-)([a-z0-9-]{1,63}\.)+[a-z]{2,}$/.test(customHost());
-      const canNext = () => D.step === 'domain' ? (D.mode === 'sub' ? D.subState === 'ok' : okCustom()) : D.step === 'dns' ? D.dns === 'ok' : true;
+      const canNext = () => D.step === 'domain' ? D.subState === 'ok' : true;
       const sync = () => { const b = $('[data-act=next]', el); if (b) b.disabled = !canNext(); };
 
       const ST = {
@@ -100,20 +114,20 @@ window.StrapOnline = (() => {
           <div class="os-fg" data-fg="category"><label>What do you sell?</label><div class="os-chips">${CATS.map(x => `<button type="button" class="os-chip${c.contact.category === x ? ' on' : ''}" data-act="cat" data-v="${esc(x)}">${x}</button>`).join('')}</div><p class="os-err"></p></div>
           ${fld('country', 'text', 'e.g. Nigeria')}${fld('address', 'text', 'e.g. Lekki, Lagos')}${fld('tagline', 'text', 'Good things, delivered', 'maxlength="80"')}</div>` + foot('Continue'),
         template: () => head('Pick a look', 'Choose a starting point. You can change colours, fonts and layout any time in settings.') + `<div class="os-tpls">${Object.entries(F.TEMPLATES).map(([id, t]) => { const p = F.applyTemplate(JSON.parse(JSON.stringify(c)), id); return `<div role="button" tabindex="0" class="os-tpl${c.template === id ? ' on' : ''}" data-act="tpl" data-v="${id}">${mini(p)}<b>${t.name}</b><small>${t.note}</small></div>`; }).join('')}</div>` + foot('Continue'),
-        domain: () => head('Where should your store live?', 'Use a free Strap address, or connect a domain you already own.') + `<div class="os-opts">
-          <div class="os-opt${D.mode === 'sub' ? ' on' : ''}"><button type="button" class="os-ob" data-act="mode" data-v="sub"><i class="os-rd"></i><div><b>Free Strap address</b><small>Ready in seconds, no setup</small></div></button>${D.mode === 'sub' ? `<div class="os-rev"><div class="os-dom"><input class="os-fi" data-f="sub" id="f-sub" value="${esc(D.sub)}" placeholder="yourstore" maxlength="30" autocapitalize="off" autocomplete="off" spellcheck="false"><span>.${BASE()}</span></div><p class="os-st" id="sub-st"></p></div>` : ''}</div>
-          <div class="os-opt${D.mode === 'custom' ? ' on' : ''}"><button type="button" class="os-ob" data-act="mode" data-v="custom"><i class="os-rd"></i><div><b>A domain I own</b><small>Like mybrand.com. We’ll guide you through it</small></div></button>${D.mode === 'custom' ? `<div class="os-rev"><div class="os-dom"><input class="os-fi" data-f="custom" id="f-custom" value="${esc(D.custom)}" placeholder="mybrand.com" autocapitalize="off" autocomplete="off" spellcheck="false"></div><p class="os-st" id="cu-st">Enter the domain without https:// or www.</p></div>` : ''}</div></div>` + foot(D.mode === 'custom' ? 'Continue to DNS setup' : 'Continue', '', !canNext()),
+        domain: () => head('Choose your store address', 'Your store will be a real public website with its own product links, search metadata and sitemap.') + `<div class="os-opts">
+          <div class="os-opt on"><div class="os-ob"><i class="os-rd"></i><div><b>Free Strap address</b><small>Live as soon as you launch. No DNS setup.</small></div></div><div class="os-rev"><div class="os-dom"><span>${esc(location.host)}/store/</span><input class="os-fi" data-f="sub" id="f-sub" value="${esc(D.sub)}" placeholder="yourstore" maxlength="30" autocapitalize="off" autocomplete="off" spellcheck="false"></div><p class="os-st" id="sub-st"></p></div></div>
+          <div class="os-opt"><div class="os-ob"><i class="os-rd"></i><div><b>Custom domains</b><small>Custom domain routing is not enabled on this preview yet. Your free Strap URL works now.</small></div></div></div></div>` + foot('Continue', '', !canNext()),
         dns: () => head('Connect ' + esc(customHost()), 'Add these three records at your domain provider so customers can reach your store.') + `<div class="os-recs">${dnsRows(customHost(), D.token)}</div>${dnsHelp}<div id="dns-st">${dnsStatus(D.dns)}</div>` +
           `<div class="os-foot"><button type="button" class="os-pill" data-act="${D.dns === 'ok' ? 'next' : 'verify'}" ${D.dns === 'checking' ? 'disabled' : ''}>${D.dns === 'ok' ? 'Continue' : D.dns === 'fail' ? 'Try again' : 'Verify domain'}</button>${D.dns === 'ok' ? '' : '<button type="button" class="os-link" data-act="later">I’ll verify later</button>'}</div>`,
         products: () => { const n = F.catalog({ sync: 'auto' }, products()).length; return head('Your products', 'Choose how products get into your online store.') + `<div class="os-opts">
           <button type="button" class="os-opt os-ob${D.sync === 'auto' ? ' on' : ''}" data-act="sync" data-v="auto"><i class="os-rd"></i><div><b>Add my products automatically</b><small>${n ? n + ' active product' + (n === 1 ? '' : 's') + ' will be added, and new ones sync as you create them' : 'New products sync to your store as you create them'}</small></div></button>
           <button type="button" class="os-opt os-ob${D.sync === 'manual' ? ' on' : ''}" data-act="sync" data-v="manual"><i class="os-rd"></i><div><b>I’ll add them myself</b><small>Start empty and pick which products appear in your store</small></div></button></div>` + foot('Continue'); },
-        review: () => { const host = D.mode === 'sub' ? D.sub + '.' + BASE() : customHost(); return head('Ready to launch?', 'Check everything looks right. You can edit any of it later.') + `<div class="os-sum">
+        review: () => { const host = location.host + '/store/' + D.sub; return head('Ready to launch?', 'Check everything looks right. You can edit any of it later.') + `<div class="os-sum">
           ${[['Store', c.name, 'details'], ['Contact', c.contact.email + ' · ' + c.contact.phone, 'details'], ['Location', [c.contact.address, c.contact.country].join(', '), 'details'], ['Look', F.TEMPLATES[c.template].name, 'template'], ['Address', host + (D.mode === 'custom' && D.dns !== 'ok' ? ' (verify later)' : ''), 'domain'], ['Products', D.sync === 'auto' ? 'Added automatically' : 'Added manually', 'products']]
             .map(([l, v, s]) => `<div class="os-sr"><div><small>${l}</small><b>${esc(v)}</b></div><button type="button" data-act="edit" data-v="${s}">Edit</button></div>`).join('')}</div>` + foot('Launch my store'); },
       };
 
-      const subPaint = () => { const p = $('#sub-st', el); if (!p) return sync(); const m = { idle: ['', ''], bad: ['Use 3 to 30 letters, numbers or hyphens.', 'bad'], checking: ['Checking availability…', ''], ok: [D.sub + '.' + BASE() + ' is available', 'ok'], taken: ['That address is taken. Try another.', 'bad'] }[D.subState]; p.textContent = m[0]; p.className = 'os-st ' + m[1]; sync(); };
+      const subPaint = () => { const p = $('#sub-st', el); if (!p) return sync(); const m = { idle: ['', ''], bad: ['Use 3 to 30 letters, numbers or hyphens.', 'bad'], checking: ['Checking availability…', ''], ok: [location.host + '/store/' + D.sub + ' is available', 'ok'], taken: ['That address is taken. Try another.', 'bad'] }[D.subState]; p.textContent = m[0]; p.className = 'os-st ' + m[1]; sync(); };
       let rid = 0, tm = 0;
       const subCheck = async () => {
         const v = D.sub; if (!v) D.subState = 'idle'; else if (!/^[a-z0-9][a-z0-9-]{1,28}[a-z0-9]$/.test(v)) D.subState = 'bad';
@@ -143,10 +157,11 @@ window.StrapOnline = (() => {
 
       async function launch() {
         c.sync = D.sync; c.productIds = []; c.createdAt = Date.now(); c.status = 'live';
-        c.domain = D.mode === 'sub' ? { type: 'sub', host: D.sub + '.' + BASE(), status: 'live', token: '' } : { type: 'custom', host: customHost(), status: D.dns === 'ok' ? 'live' : 'pending', token: D.token, temp: (slug(c.name) || 'store') + '.' + BASE() };
+        c.domain = { type: 'sub', slug: D.sub, host: location.host + '/store/' + D.sub, status: 'live', token: '' };
+        c.updatedAt = new Date().toISOString();
         await cover('Launching your store', async () => {
-          await S.api.createStore(c); S.setOnline(c); refresh(); D.done = true;
-          const pend = c.domain.type === 'custom' && c.domain.status === 'pending';
+          await S.setOnline(c); refresh(); D.done = true;
+          const pend = false;
           $('.os-top', el).hidden = true; body.className = 'os-body f done';
           body.innerHTML = `<div class="os-win">${ill(true)}<h1 class="os-h">Your store is live!</h1><p class="os-p">${pend ? 'Your domain is waiting on DNS. Until it’s verified, customers can shop at:' : 'Customers can now shop at:'}</p>
             <button type="button" class="os-url" data-copy="https://${esc(url(c))}"><span>${esc(url(c))}</span>${ic('copy', 18, 2)}</button>
@@ -219,7 +234,14 @@ window.StrapOnline = (() => {
     return { rows, score, label: score >= 80 ? 'Healthy' : score >= 50 ? 'Getting there' : 'Needs attention' };
   }
   const share = async c => { const u = 'https://' + url(c); if (navigator.share) { try { await navigator.share({ title: c.name, url: u }); return; } catch (e) { if (e && e.name === 'AbortError') return; } } await copy(u); toast('Store link copied'); };
-  const setStatus = c => { c.status = c.status === 'live' ? 'paused' : 'live'; save(c); toast(c.status === 'live' ? 'Your store is open again' : 'Store paused'); };
+  const setStatus = async c => {
+    const previous = c.status;
+    c.status = previous === 'live' ? 'paused' : 'live';
+    const ok = await save(c);
+    if (ok) toast(c.status === 'live' ? 'Your store is open again' : 'Store paused');
+    else c.status = previous;
+    return ok;
+  };
 
   function page(root, ctx) {
     CTX = ctx; let menu = false;
@@ -250,7 +272,7 @@ window.StrapOnline = (() => {
       if (menu) { menu = false; }
       if (!c) return draw();
       if (act === 'm-preview') preview(c); else if (act === 'm-share' || act === 'fix-share') share(c);
-      else if (act === 'm-pause' || act === 'fix-resume') setStatus(c);
+      else if (act === 'm-pause' || act === 'fix-resume') await setStatus(c);
       else if (act === 'm-settings') settings(ctx);
       else if (act === 'fix-domain') settings(ctx, 'domain'); else if (act === 'fix-products') settings(ctx, 'products'); else if (act === 'fix-details') settings(ctx, 'details');
       else if (act === 'orders') ctx.go('orders');
@@ -286,7 +308,9 @@ window.StrapOnline = (() => {
         w.addEventListener('click', async e => {
           const b = e.target.closest('[data-st]'); if (!b) return;
           if (b.dataset.st === 'cancelled' && !await K.confirm({ title: 'Cancel this order?', body: 'The customer won’t be notified automatically.', ok: 'Cancel order', cancel: 'Keep it', icon: 'warn', danger: true })) return;
-          S.setOrderStatus(o.id, b.dataset.st); close(); draw(); refresh(); toast('Order ' + OST[b.dataset.st][0].toLowerCase());
+          b.disabled = true; b.textContent = 'Saving…';
+          try { await S.setOrderStatus(o.id, b.dataset.st); close(); draw(); refresh(); toast('Order ' + OST[b.dataset.st][0].toLowerCase()); }
+          catch (error) { b.disabled = false; toast(error.message || 'Could not save order status.'); }
         });
       });
     }
@@ -296,11 +320,11 @@ window.StrapOnline = (() => {
       const o = e.target.closest('[data-o]'); if (o) return detail(o.dataset.o);
       const a = e.target.closest('[data-act]'); if (!a) return;
       if (a.dataset.act === 'create') ctx.go('online'); else if (a.dataset.act === 'preview') preview(S.online());
-      else if (a.dataset.act === 'refresh') { const n = (await S.api.pullOrders() || []).map(x => S.addOrder(x)).length; draw(); toast(n ? n + ' new order' + (n === 1 ? '' : 's') : 'You’re up to date'); }
+      else if (a.dataset.act === 'refresh') { const before = S.orders().length; try { const list = await S.api.pullOrders(); draw(); toast(list.length > before ? (list.length - before) + ' new order' + (list.length - before === 1 ? '' : 's') : 'Orders refreshed'); } catch (error) { toast(error.message || 'Could not refresh orders.'); } }
     });
     root.addEventListener('input',e=>{if(e.target.matches('[data-order-search]')){query=e.target.value.trim().toLowerCase();const pos=e.target.selectionStart;draw();const q=$('[data-order-search]',root);if(q){q.focus();q.setSelectionRange(pos,pos);}}});
     views.add(draw); draw();
-    return { onShow: async () => { draw(); try { const n = (await S.api.pullOrders() || []).map(x => S.addOrder(x)).length; if (n) draw(); } catch (e) {} } };
+    return { onShow: async () => { try { await S.api.pullOrders(); draw(); } catch (error) { draw(); toast(error.message || 'Orders could not be refreshed.'); } } };
   }
 
   /* =====================================================================
@@ -319,7 +343,10 @@ window.StrapOnline = (() => {
       main: () => hd('Store settings') + `<div class="os-rows">${row('edit', 'Store details', c.name, 'details')}${row('palette', 'Appearance', (F.TEMPLATES[c.template] || { name: 'Custom' }).name + ' · ' + c.theme.font, 'appearance')}${row('globe', 'Domain', url(c), 'domain')}${row('bag', 'Products', c.sync === 'auto' ? 'Auto-sync' : 'Manual', 'products')}${row('layers', 'Content & templates', 'Sections', 'tools')}</div>
         <div class="os-rows"><div class="os-row static"><span class="os-ic">${ic('store', 20, 1.8)}</span><span>Store is open</span><button type="button" class="os-sw${c.status === 'live' ? ' on' : ''}" data-act="live" role="switch" aria-checked="${c.status === 'live'}" aria-label="Store is open"></button></div></div>
         <button type="button" class="os-danger" data-act="del">${ic('trash', 20, 1.9)}Delete online store</button>`,
-      details: () => hd('Store details') + lf('name', 'Store name', c.name) + lf('tagline', 'Short description', c.tagline) + lf('email', 'Store email', c.contact.email, 'email') + lf('phone', 'Phone number', c.contact.phone, 'tel') + lf('country', 'Country', c.contact.country) + lf('address', 'City or address', c.contact.address) + `<button type="button" class="pm-add wide" data-act="saved">Save changes</button>`,
+      details: () => hd('Store details') + lf('name', 'Store name', c.name) + lf('tagline', 'Short description', c.tagline) + lf('email', 'Store email', c.contact.email, 'email') + lf('phone', 'Phone number', c.contact.phone, 'tel') + lf('country', 'Country', c.contact.country) + lf('address', 'City or address', c.contact.address) +
+        `<h2 class="pm-h">Search engine listing</h2><p class="os-p2">These fields appear in search results and when your store link is shared.</p>` +
+        lf('seoTitle', 'SEO page title', c.seo?.title || c.name) + lf('seoDescription', 'SEO description', c.seo?.description || c.tagline) +
+        `<button type="button" class="pm-add wide" data-act="saved">Save changes</button>`,
       appearance: () => { const m = Object.keys(F.MODES).find(k => F.MODES[k].bg === c.theme.bg) || ''; return hd('Appearance') + mini(c, 'lg') + `
         <h2 class="pm-h">Template</h2><div class="os-chips2">${Object.entries(F.TEMPLATES).map(([k, t]) => `<button type="button" class="os-chip${c.template === k ? ' on' : ''}" data-act="set" data-k="template" data-v="${k}">${t.name}</button>`).join('')}</div>
         <h2 class="pm-h">Colours</h2>${seg('mode', Object.entries(F.MODES).map(([k, x]) => [k, x.l]), m)}<div class="os-sw-row">${F.ACCENTS.map(a => `<button type="button" class="os-dot${c.theme.accent === a ? ' on' : ''}" style="--c:${a}" data-act="set" data-k="accent" data-v="${a}" aria-label="Accent ${a}"></button>`).join('')}</div>
@@ -327,50 +354,51 @@ window.StrapOnline = (() => {
         <h2 class="pm-h">Corners</h2>${seg('radius', [[4, 'Sharp'], [12, 'Soft'], [20, 'Round']], c.theme.radius)}`; },
       tools: () => hd('Store content & templates') + `<p class="os-p2">Add or remove storefront sections, edit their text, and move them into the order customers see.</p><div class="os-rows">${c.sections.map((s,i)=>`<div class="os-row os-section-edit"><div><b>${esc(s.type)}</b><small>Section ${i+1}</small></div><button type="button" data-sec-up="${i}" aria-label="Move up">↑</button><button type="button" data-sec-down="${i}" aria-label="Move down">↓</button><button type="button" data-sec-del="${i}" aria-label="Remove section">×</button></div>${['title','text','cta','style','layout','question','answer'].filter(k=>s[k]!=null || (k==='title'&&s.type!=='footer')).slice(0,3).map(k=>`<label class="os-lf"><span>${k}</span><input data-section="${i}" data-field="${k}" value="${esc(s[k]||'')}"></label>`).join('')}`).join('')}</div><h2 class="pm-h">Add a section</h2><div class="os-chips2">${['announcement','banner','products','about','contact','testimonials','faq','policies','footer'].map(t=>`<button type="button" class="os-chip" data-add-section="${t}">+ ${t}</button>`).join('')}</div><h2 class="pm-h">Import / export template</h2><p class="os-p2">Import a Strap JSON or XML template. Your store name, products, domain, contact details and orders are kept; only the design (theme and sections) is applied.</p><input type="file" id="os-template-file" accept=".json,.xml,application/json,text/xml,application/xml"><div class="os-chips2"><button type="button" class="os-chip" data-export="json">Export JSON</button><button type="button" class="os-chip" data-export="xml">Export XML</button></div><details class="os-help"><summary>Template import rules</summary><ol><li>Use a Strap template exported as JSON or XML.</li><li>Required fields: version, theme and sections.</li><li>Up to 30 sections; each section must use a supported type.</li><li>Colours must be six-digit hex values (for example #e6f53a).</li><li>Imports change appearance and page sections only. They never replace products, orders, domain or account information.</li><li>Review the preview after importing. Unsupported or invalid files are rejected without changing your store.</li></ol></details>`,
       domain: () => {
-        const cu = c.domain.type === 'custom';
-        let h = hd('Domain') + `<article class="os-card"><small class="os-k">Your store address</small><b class="os-big">${esc(url(c))}</b>${cu ? `<span class="os-badge ${c.domain.status === 'live' ? 'on' : ''}">${c.domain.status === 'live' ? 'Domain connected' : 'Waiting for DNS'}</span>` : '<span class="os-badge on">Free Strap address</span>'}</article>`;
-        if (cu && c.domain.status !== 'live') h += `<h2 class="pm-h">DNS records</h2><div class="os-recs">${dnsRows(c.domain.host, c.domain.token)}</div>${dnsHelp}<div id="dns-st">${dnsStatus(Dm.dns)}</div><button type="button" class="pm-add wide" data-act="verify" ${Dm.dns === 'checking' ? 'disabled' : ''}>Verify domain</button>`;
-        if (!cu) h += `<h2 class="pm-h">Change address</h2><div class="os-dom light"><input class="os-fi" data-s="sub" value="${esc(Dm.sub)}" placeholder="${esc(c.domain.host.split('.')[0])}" maxlength="30" autocapitalize="off" spellcheck="false"><span>.${BASE()}</span></div><p class="os-st" id="sub-st"></p><button type="button" class="pm-add wide" data-act="savesub" ${Dm.state === 'ok' ? '' : 'disabled'}>Save address</button>`
-          + `<h2 class="pm-h">Use a domain you own</h2>${Dm.adding ? `<div class="os-dom light"><input class="os-fi" data-s="custom" value="${esc(Dm.custom)}" placeholder="mybrand.com" autocapitalize="off" spellcheck="false"></div><button type="button" class="pm-add wide" data-act="addcustom">Continue to DNS setup</button>` : `<button type="button" class="pm-add wide alt" data-act="startcustom">Connect my domain</button>`}`;
-        else h += `<button type="button" class="os-link" data-act="usesub">Switch back to a free Strap address</button>`;
-        return h; },
+        return hd('Domain') + `<article class="os-card"><small class="os-k">Your public store address</small><b class="os-big">${esc(url(c))}</b><span class="os-badge on">Live public URL</span></article>
+          <h2 class="pm-h">Change your store address</h2><div class="os-dom light"><span>${esc(location.host)}/store/</span><input class="os-fi" data-s="sub" value="${esc(Dm.sub || c.domain.slug || slug(c.name))}" placeholder="yourstore" maxlength="30" autocapitalize="off" spellcheck="false"></div>
+          <p class="os-st" id="sub-st"></p><button type="button" class="pm-add wide" data-act="savesub" disabled>Save address</button>
+          <p class="os-p2">Custom domain routing is not enabled on this preview yet. The free Strap address above is public, shareable and included in your sitemap.</p>`;
+      },
       products: () => { const l = products().filter(p => !p.status || p.status === 'active'); return hd('Products') + `<p class="os-p2">Choose how products reach your online store.</p>` + seg('sync', [['auto', 'Auto-sync'], ['manual', 'Manual']], c.sync) +
         (c.sync === 'auto' ? `<p class="os-p2">Every active product is in your store, and new ones appear as you create them.</p>` : (l.length ? `<h2 class="pm-h">In your store <small>${(c.productIds || []).length} of ${l.length}</small></h2><ul class="os-pl">${l.map(p => `<li><button type="button" class="os-pr${(c.productIds || []).includes(p.id) ? ' on' : ''}" data-act="pick" data-v="${esc(p.id)}"><i>${ic('check', 14, 3.2)}</i><b>${esc(p.title)}</b><small>${esc(ctx.money(p.price || 0))}</small></button></li>`).join('')}</ul>` : `<p class="os-p2">You have no products yet. Add some from the Products page, then choose them here.</p>`)); }
     };
     const draw = () => { const y = el.scrollTop; box.innerHTML = V[stack[stack.length - 1]](); el.scrollTop = y; if (stack[stack.length - 1] === 'appearance') fit(el); if (stack[stack.length - 1] === 'domain') subPaint(); };
-    const subPaint = () => { const p = $('#sub-st', el); if (!p) return; const m = { idle: ['', ''], bad: ['Use 3 to 30 letters, numbers or hyphens.', 'bad'], checking: ['Checking availability…', ''], ok: [Dm.sub + '.' + BASE() + ' is available', 'ok'], taken: ['That address is taken.', 'bad'] }[Dm.state]; p.textContent = m[0]; p.className = 'os-st ' + m[1]; const b = $('[data-act=savesub]', el); if (b) b.disabled = Dm.state !== 'ok'; };
+    const subPaint = () => { const p = $('#sub-st', el); if (!p) return; const m = { idle: ['', ''], bad: ['Use 3 to 30 letters, numbers or hyphens.', 'bad'], checking: ['Checking availability…', ''], ok: [location.host + '/store/' + Dm.sub + ' is available', 'ok'], taken: ['That address is taken.', 'bad'] }[Dm.state]; p.textContent = m[0]; p.className = 'os-st ' + m[1]; const b = $('[data-act=savesub]', el); if (b) b.disabled = Dm.state !== 'ok'; };
     let tm = 0, rid = 0;
 
     el.addEventListener('click', async e => {
       const a = e.target.closest('[data-act], [data-sec-up], [data-sec-down], [data-sec-del], [data-add-section], [data-export]'); if (!a) return; const act = a.dataset.act, v = a.dataset.v;
       if (act === 'back') { if (stack.length > 1) { stack.pop(); return draw(); } return el.close(); }
-      if (a.dataset.secUp != null || a.dataset.secDown != null || a.dataset.secDel != null) { const i=+(a.dataset.secUp??a.dataset.secDown??a.dataset.secDel); if(a.dataset.secDel!=null)c.sections.splice(i,1); else {const j=i+(a.dataset.secUp!=null?-1:1);if(j>=0&&j<c.sections.length)[c.sections[i],c.sections[j]]=[c.sections[j],c.sections[i]];} save(c);return draw(); }
-      if (a.dataset.addSection) { const t=a.dataset.addSection, defaults={announcement:{type:t,text:'Welcome to our store'},banner:{type:t,title:'A little something special',text:'Discover our latest collection.'},products:{type:t,title:'Shop our products',layout:'grid'},about:{type:t,title:'About us',text:''},contact:{type:t,title:'Contact'},testimonials:{type:t,title:'What customers say',text:'Lovely quality and service.'},faq:{type:t,title:'FAQs',question:'How long does delivery take?',answer:'Contact us for delivery details.'},policies:{type:t,title:'Store policies',text:'Contact us for returns and delivery information.'},footer:{type:t}}; if(c.sections.length>=30)return toast('Maximum 30 sections');c.sections.push(defaults[t]);save(c);return draw();}
+      if (a.dataset.secUp != null || a.dataset.secDown != null || a.dataset.secDel != null) { const i=+(a.dataset.secUp??a.dataset.secDown??a.dataset.secDel); if(a.dataset.secDel!=null)c.sections.splice(i,1); else {const j=i+(a.dataset.secUp!=null?-1:1);if(j>=0&&j<c.sections.length)[c.sections[i],c.sections[j]]=[c.sections[j],c.sections[i]];} if (!(await save(c))) return; return draw(); }
+      if (a.dataset.addSection) { const t=a.dataset.addSection, defaults={announcement:{type:t,text:'Welcome to our store'},banner:{type:t,title:'A little something special',text:'Discover our latest collection.'},products:{type:t,title:'Shop our products',layout:'grid'},about:{type:t,title:'About us',text:''},contact:{type:t,title:'Contact'},testimonials:{type:t,title:'What customers say',text:'Lovely quality and service.'},faq:{type:t,title:'FAQs',question:'How long does delivery take?',answer:'Contact us for delivery details.'},policies:{type:t,title:'Store policies',text:'Contact us for returns and delivery information.'},footer:{type:t}}; if(c.sections.length>=30)return toast('Maximum 30 sections');c.sections.push(defaults[t]);if (!(await save(c))) return;return draw();}
       if (a.dataset.export) { const data=a.dataset.export==='json'?JSON.stringify({format:'strap-template',version:1,config:{v:c.v||2,template:c.template,theme:c.theme,sections:c.sections}},null,2):F.toXml({v:c.v||2,template:c.template,theme:c.theme,sections:c.sections}); const blob=new Blob([data],{type:a.dataset.export==='json'?'application/json':'application/xml'}),u=URL.createObjectURL(blob),ln=document.createElement('a');ln.href=u;ln.download='strap-store-template.'+a.dataset.export;ln.click();URL.revokeObjectURL(u);return toast('Template exported');}
       if (act === 'to') { stack.push(v); el.scrollTop = 0; return draw(); }
-      if (act === 'live') { setStatus(c); return draw(); }
+      if (act === 'live') { await setStatus(c); return draw(); }
       if (act === 'set') {
         const k = a.dataset.k;
         if (k === 'template') F.applyTemplate(c, v); else if (k === 'mode') { c.theme.bg = F.MODES[v].bg; c.theme.ink = F.MODES[v].ink; } else if (k === 'accent') c.theme.accent = v; else if (k === 'font') c.theme.font = v; else if (k === 'radius') c.theme.radius = +v;
         else if (k === 'sync') { c.sync = v; if (v === 'manual' && !(c.productIds || []).length) c.productIds = []; }
         save(c); return draw();
       }
-      if (act === 'pick') { const s = new Set(c.productIds || []); s.has(v) ? s.delete(v) : s.add(v); c.productIds = [...s]; save(c); return draw(); }
+      if (act === 'pick') { const s = new Set(c.productIds || []); s.has(v) ? s.delete(v) : s.add(v); c.productIds = [...s]; if (!(await save(c))) return; return draw(); }
       if (act === 'saved') {
         const g = k => $(`[data-s=${k}]`, el).value.trim();
         if (g('name').length < 2) return toast('Enter your store name');
         if (!/^\S+@\S+\.\S+$/.test(g('email'))) return toast('Enter a valid email address');
         if (g('phone').replace(/\D/g, '').length < 7) return toast('Enter a valid phone number');
-        c.name = g('name'); c.tagline = g('tagline'); Object.assign(c.contact, { email: g('email'), phone: g('phone'), country: g('country'), address: g('address') }); save(c); K.fx('ok'); toast('Store details saved'); stack.pop(); return draw();
+        const seoTitle = g('seoTitle'), seoDescription = g('seoDescription');
+        if (seoTitle.length > 180) return toast('Keep the SEO title under 180 characters.');
+        if (seoDescription.length > 320) return toast('Keep the SEO description under 320 characters.');
+        c.name = g('name'); c.tagline = g('tagline');
+        Object.assign(c.contact, { email: g('email'), phone: g('phone'), country: g('country'), address: g('address') });
+        c.seo = { ...(c.seo || {}), title: seoTitle, description: seoDescription };
+        if (!(await save(c))) return;
+        K.fx('ok'); toast('Store details and SEO saved'); stack.pop(); return draw();
       }
-      if (act === 'savesub') { c.domain.host = Dm.sub + '.' + BASE(); save(c); K.fx('ok'); toast('Store address updated'); Dm.sub = ''; Dm.state = 'idle'; return draw(); }
-      if (act === 'usesub') { c.domain = { type: 'sub', host: c.domain.temp || slug(c.name) + '.' + BASE(), status: 'live', token: '' }; save(c); toast('Using your free Strap address'); return draw(); }
-      if (act === 'startcustom') { Dm.adding = true; return draw(); }
-      if (act === 'addcustom') {
-        const h = Dm.custom.replace(/^https?:\/\//i, '').replace(/^www\./i, '').replace(/\/.*$/, '').trim().toLowerCase();
-        if (!/^(?!-)([a-z0-9-]{1,63}\.)+[a-z]{2,}$/.test(h)) { K.fx('err'); return toast('Enter a domain like mybrand.com'); }
-        c.domain = { type: 'custom', host: h, status: 'pending', token: rand(10), temp: c.domain.host }; Dm.adding = false; Dm.dns = 'idle'; save(c); return draw();
-      }
+      if (act === 'savesub') { c.domain = { type:'sub', slug:Dm.sub, host:location.host + '/store/' + Dm.sub, status:'live', token:'' }; if (!(await save(c))) return; K.fx('ok'); toast('Store address updated'); Dm.sub = ''; Dm.state = 'idle'; return draw(); }
+      if (act === 'usesub') { const nextSlug = c.domain.slug || slug(c.name); c.domain = { type:'sub', slug:nextSlug, host:location.host + '/store/' + nextSlug, status:'live', token:'' }; if (!(await save(c))) return; toast('Using your free Strap address'); return draw(); }
+      if (act === 'startcustom') { toast('Custom domain routing is not enabled for this preview yet. Your free Strap address is live.'); return; }
+      if (act === 'addcustom') { toast('Custom domain routing is not enabled for this preview yet. Your free Strap address remains active.'); return; }
       if (act === 'verify') {
         Dm.dns = 'checking'; draw(); const r = await S.api.verifyDomain(c.domain.host, c.domain.token); Dm.dns = r.verified ? 'ok' : 'fail';
         if (r.verified) { c.domain.status = 'live'; save(c); K.fx('ok'); toast('Domain connected'); Dm.dns = 'idle'; } draw(); return;
@@ -387,7 +415,26 @@ window.StrapOnline = (() => {
         if (Dm.state === 'checking') tm = setTimeout(async () => { const id = ++rid, r = await S.api.checkSubdomain(v); if (id !== rid) return; Dm.state = r.available ? 'ok' : 'taken'; subPaint(); }, 420); }
       else if (k === 'custom') Dm.custom = e.target.value;
     });
-    el.addEventListener('change', async e=>{if(e.target.id!=='os-template-file'||!e.target.files[0])return;const f=e.target.files[0];try{const raw=await f.text();let obj=/\.xml$/i.test(f.name)?F.fromXml(raw):JSON.parse(raw);const t=F.validateImport(obj);c.theme={...c.theme,...t.theme};c.sections=JSON.parse(JSON.stringify(t.sections));if(t.template&&F.TEMPLATES[t.template])c.template=t.template;save(c);toast('Template imported. Preview your store.');draw();}catch(err){toast('Import failed: '+(err.message||'Invalid template'));}e.target.value='';});
+      el.addEventListener('change', async e => {
+        if (e.target.id !== 'os-template-file' || !e.target.files[0]) return;
+        const file = e.target.files[0];
+        const previous = { theme: c.theme, sections: c.sections, template: c.template };
+        try {
+          if (file.size > 2 * 1024 * 1024) throw new Error('Template files must be 2 MB or smaller.');
+          const raw = await file.text();
+          const obj = /\.xml$/i.test(file.name) ? F.fromXml(raw) : JSON.parse(raw);
+          const t = F.validateImport(obj);
+          c.theme = { ...c.theme, ...t.theme };
+          c.sections = JSON.parse(JSON.stringify(t.sections));
+          if (t.template && F.TEMPLATES[t.template]) c.template = t.template;
+          if (await save(c)) { toast('Template imported and saved. Preview your store.'); draw(); }
+          else { Object.assign(c, previous); }
+        } catch (err) {
+          Object.assign(c, previous);
+          toast('Import failed: ' + (err.message || 'Invalid template'));
+        }
+        e.target.value = '';
+      });
     window.addEventListener('resize', () => fit(el));
     draw();
   }
