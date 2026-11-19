@@ -296,7 +296,7 @@ window.StrapProducts = (() => {
     // ----- CSV import -----
     function csvPicker() {
       fOpen(`${top()}<div class="fl-body"><div class="fl-hero">${U.illus('csv')}</div><h1>Import via CSV</h1><p class="fl-sub">Upload a spreadsheet from your old store, or a file you prepared yourself.</p>
-        <label class="fl-drop"><input type="file" accept=".csv,.txt,.xls,.xlsx" hidden><span class="fl-dico">${ic('upload', 28, 1.8)}</span><b>Choose a file</b><small>or drag and drop it here</small></label>
+        <label class="fl-drop"><input type="file" accept=".csv,.txt" hidden><span class="fl-dico">${ic('upload', 28, 1.8)}</span><b>Choose a file</b><small>or drag and drop it here</small></label>
         <p class="fl-fm">Accepts .csv, .txt and .xls</p>
         <ul class="fl-tips"><li>${ic('check', 16, 2.6)}<span>A <b>Title</b> column is required</span></li><li>${ic('check', 16, 2.6)}<span>Optional: Price, Quantity, Status, SKU, Image</span></li></ul>
         <button type="button" class="pm-ghost fl-link" data-a="sample">${ic('download', 18, 2)} Download sample CSV</button></div>`);
@@ -646,18 +646,19 @@ window.StrapProducts = (() => {
 
     // ----- boot -----
     renderAll();
+    window.addEventListener('strap:state-restored', () => { items = StrapFeatures.items(); renderAll(); });
     api.getProducts().then(r => { items = r; loading = false; renderAll(); }).catch(() => { items = []; loading = false; renderAll(); });
     return {
       items: () => items, openAdd: () => openPage(), openImport, openAI,
       countIn: name => items.filter(p => (p.collections || []).includes(name)).length,
       inCollection: name => items.filter(p => (p.collections || []).includes(name)).map(p => p.id),
-      setCollection(name, ids) {
+      async setCollection(name, ids) {
         const want = new Set(ids);
         items.forEach(p => { const has = (p.collections || []).includes(name), on = want.has(p.id); if (on && !has) p.collections = [...(p.collections || []), name]; if (!on && has) p.collections = p.collections.filter(x => x !== name); });
-        renderAll();
+        await StrapFeatures.setItems(items); renderAll();
       },
-      dropCollection(name) { items.forEach(p => { if ((p.collections || []).includes(name)) p.collections = p.collections.filter(x => x !== name); }); renderAll(); },
-      setQty(id, qty) { const p = items.find(x => x.id === id); if (p) { p.qty = Math.max(0, qty); renderBody(); } return p; },
+      async dropCollection(name) { items.forEach(p => { if ((p.collections || []).includes(name)) p.collections = p.collections.filter(x => x !== name); }); await StrapFeatures.setItems(items); renderAll(); },
+      async setQty(id, qty, persist = true) { const p = items.find(x => x.id === id); if (p) { p.qty = Math.max(0, qty); await StrapFeatures.setItems(items, undefined, persist); renderBody(); } return p; },
       onChange(fn) { subs.push(fn); }
     };
   }
