@@ -75,7 +75,7 @@ window.StrapSales = (() => {
       if (S.prefs.creditReminders && dues.length) {
         due.hidden = false;
         const over = dues.filter(x => S.credits.daysLeft(x) < 0).length;
-        due.innerHTML = `<span class="sx-due-ic">${ic('clock', 20, 2)}</span><span><b>${plural(dues.length, 'credit')} ${over ? `overdue or due soon` : 'due soon'}</b><small>${money(dues.reduce((a, x) => a + S.credits.balance(x), 0))} to collect. Tap to remind customers.</small></span>${ic('chevR', 18, 2)}`;
+        due.innerHTML = `<span class="sx-due-ic">${ic('clock', 20, 2)}</span><span><b>${plural(dues.length, 'credit')} ${over ? `overdue or due soon` : 'due soon'}</b><small>${money(dues.reduce((a, x) => a + S.credits.balance(x), 0))} to collect. Tap to contact customers manually.</small></span>${ic('chevR', 18, 2)}`;
       } else due.hidden = true;
     }
     function rowHtml(p) {
