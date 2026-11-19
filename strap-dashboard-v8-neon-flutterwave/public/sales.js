@@ -187,11 +187,25 @@ window.StrapSales = (() => {
         cashier: ctx.store.name || '', customer: credit ? { name: draft.name.trim(), phone: draft.phone.trim(), email: draft.email.trim() } : null,
         paidNow: credit ? deposit : total, due: credit ? draft.due : ''
       };
-      // stock comes off as soon as the sale is recorded
-      sale.lines.forEach(l => { const p = prod(l.id); if (p && p.tracked) P().setQty(p.id, p.qty - l.qty); });
-      S.addSale(sale);
-      if (credit) { const c = S.addCredit({ saleId: sale.id, no: sale.no, customer: sale.customer, total, due: draft.due }); if (deposit > 0) S.payCredit(c.id, deposit); }
-      else S.addPayment({ amount: total, saleId: sale.id, method: draft.method, type: 'sale' });
+      // Commit the sale ledger and all stock deductions to Neon in one account-data write.
+      try {
+        await S.batch(async () => {
+          for (const line of sale.lines) {
+            const p = prod(line.id);
+            if (p && p.tracked) await P().setQty(p.id, p.qty - line.qty, false);
+          }
+          S.addSale(sale);
+          if (credit) {
+            const c = S.addCredit({ saleId: sale.id, no: sale.no, customer: sale.customer, total, due: draft.due });
+            if (deposit > 0) S.payCredit(c.id, deposit);
+          } else S.addPayment({ amount: total, saleId: sale.id, method: draft.method, type: 'sale' });
+        }, true);
+      } catch (error) {
+        btn.disabled = false;
+        if (er) er.textContent = error.message || 'We could not save this sale. No receipt was created. Please retry.';
+        fx('err');
+        return;
+      }
       cart = []; draft = { method: 'cash', name: '', phone: '', email: '', due: '', paid: '' };
       cartSheet.close(); redrawAll(); fx('ok'); showDone(sale);
     }
