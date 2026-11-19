@@ -267,18 +267,17 @@ window.StrapFeatures = (() => {
     let w = n.toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(Boolean), k = w.filter(x => !skip.has(x)); if (!k.length) k = w;
     let s = k.join(''); if (s.length > max) s = k[0].slice(0, max - (k.length - 1)) + k.slice(1).map(x => x[0]).join(''); return (s || 'mystore').slice(0, max);
   };
-  const mailFor = (name, dom) => { const p = name.toLowerCase().replace(/[^a-z\s]/g, '').split(/\s+/).filter(Boolean); let m; do m = `${p[0] || 'staff'}${p[1] ? '.' + p[1][0] : ''}${10 + Math.floor(Math.random() * 90)}@${dom}.com`; while (S.staff.some(x => x.email === m)); return m; };
   function staffFlow() { cover('Opening', () => { const o = ob(); ensureSecure(o, 'manage staff', () => staffHome(o)); }); }
   function staffHome(o) {
     o.step({ t: 'Staff', s: `${S.staff.length} of ${lim().staff} staff accounts used${S.plan === 'free' ? ' on the free plan' : ''}.`, back: null,
-      body: S.staff.length ? `<div class="rws">${S.staff.map(x => `<div class="rw ro"><i class="ri">${ic('users', 22, 1.8)}</i><div><b>${esc(x.name)}</b><small>${esc(x.role)} · ${esc(x.branch ? branch(x.branch).name : 'All branches')}<br>${esc(x.email)}</small></div><button type="button" class="rx" data-del="${x.id}" aria-label="Remove ${esc(x.name)}">${ic('trash', 20, 1.8)}</button></div>`).join('')}</div>` : `<div class="empt">${U.illus('customers')}<p>No staff yet. Add the people who help you run the business and give each one their own login.</p></div>`,
+      body: S.staff.length ? `<div class="rws">${S.staff.map(x => `<div class="rw ro"><i class="ri">${ic('users', 22, 1.8)}</i><div><b>${esc(x.name)}</b><small>${esc(x.role)} · ${esc(x.branch ? branch(x.branch).name : 'All branches')}${x.email ? '<br>' + esc(x.email) : ''}</small></div><button type="button" class="rx" data-del="${x.id}" aria-label="Remove ${esc(x.name)}">${ic('trash', 20, 1.8)}</button></div>`).join('')}</div>` : `<div class="empt">${U.illus('customers')}<p>No team members yet. Save names, responsibilities and contact details in your team roster.</p></div>`,
       foot: pill('Add staff', 'data-add') + (S.plan === 'free' ? pill('Upgrade for branch staff', 'data-up', 'alt') : '') });
     $('[data-add]', o.el).onclick = () => { if (S.staff.length >= lim().staff) return gate(`The free plan includes ${LIM.free.staff} staff accounts. Upgrade to Premium for more.`); addStaff(o); };
     const up = $('[data-up]', o.el); if (up) up.onclick = () => open('premium');
     $$('[data-del]', o.el).forEach(d => d.onclick = async () => { if (await K.confirm({ title: 'Remove this staff member?', body: 'Their login stops working immediately.', ok: 'Remove', cancel: 'Keep', icon: 'trash', danger: true })) { S.staff = S.staff.filter(x => x.id !== d.dataset.del); save(); staffHome(o); } });
   }
   function addStaff(o) {
-    const A = { name: '', role: '', branch: null, pin: '', dom: slug(ctx.store.bizname || 'store'), email: '' }, fn = () => esc(A.name.split(' ')[0]);
+    const A = { name: '', role: '', branch: null, email: '' }, fn = () => esc(A.name.split(' ')[0]);
     const home = () => staffHome(o);
     const privacy = () => { let agree = false;
       o.step({ t: 'Before you add staff', s: 'Staff can see parts of your business. Please confirm the privacy policy.', back: home,
@@ -292,41 +291,28 @@ window.StrapFeatures = (() => {
         foot: pill('Continue', 'data-n') });
       $$('[data-r]', o.el).forEach(r => r.onclick = () => { A.role = r.dataset.r; $$('[data-r]', o.el).forEach(x => x.classList.toggle('on', x === r)); $('#rd', o.el).textContent = ROLES.find(x => x[0] === A.role)[1]; });
       $$('[data-bb]', o.el).forEach(b => b.onclick = () => { if (b.dataset.bb && S.plan === 'free') return gate('Assigning a dedicated staff member to a branch needs a Premium account.'); A.branch = b.dataset.bb || null; $$('[data-bb]', o.el).forEach(x => x.classList.toggle('on', x === b)); });
-      $('[data-n]', o.el).onclick = () => { const i = $('#sn', o.el); A.name = i.value.trim(); if (!A.name) return ferr(i, 'Enter their name.'); if (!A.role) return toast('Choose what they’ll handle'); pin(); };
+      $('[data-n]', o.el).onclick = () => { const i = $('#sn', o.el); A.name = i.value.trim(); if (!A.name) return ferr(i, 'Enter their name.'); if (!A.role) return toast('Choose what they’ll handle'); setup(); };
     };
-    const pin = () => {
-      o.step({ t: 'Create a 6 digit login PIN', s: `${fn()} will use this PIN with their Strap work email to sign in.`, back: who,
-        body: fld('p1', 'Create PIN', { type: 'password', mode: 'numeric', max: 6, cls: 'code8' }) + fld('p2', 'Confirm PIN', { type: 'password', mode: 'numeric', max: 6, cls: 'code8' }), foot: pill('Set up staff', 'data-n disabled') });
-      const a = $('#p1', o.el), b = $('#p2', o.el), n = $('[data-n]', o.el);
-      const chk = () => { const x = digits(a, 6), y = digits(b, 6); n.disabled = !(x && y && a.value === b.value); ferr(b, b.value.length === 6 && a.value !== b.value ? 'The PINs don’t match.' : ''); };
-      a.oninput = chk; b.oninput = chk; n.onclick = () => { if (n.disabled) return; A.pin = a.value; setup(); };
-    };
-    const setup = async () => {
-      o.step({ t: `Adding ${fn()} to your team`, s: 'Saving their team profile', noBack: true, body: '<div class="spn"><div class="fx-spin"><i></i><b></b><span></span></div></div>' });
-      for (const m of ['Saving team details', 'Assigning their role', 'Preparing their roster entry']) { const s = $('.ss', o.el); if (!s) return; s.textContent = m; await sleep(450); }
-      A.email = mailFor(A.name, A.dom); email();
-    };
+    const setup = () => { A.email = ''; email(); };
     const email = () => {
-      o.step({ t: `${fn()}’s work email`, s: `Give this email to ${fn()}. They’ll sign in with it and their 6 digit PIN.`, noBack: true,
-        body: `<div class="fx-mail">${esc(A.email)}</div>`, foot: pill('Finish', 'data-fin') + pill('Adjust email', 'data-ed', 'alt') + pill('Copy email', 'data-cp', 'alt') });
-      $('[data-cp]', o.el).onclick = async () => { try { await navigator.clipboard.writeText(A.email); toast('Email copied'); } catch (er) { toast(A.email); } };
-      $('[data-ed]', o.el).onclick = () => {
-        const sh = K.sheet({ title: 'Adjust email', body: `<p class="fx-p">Change the name part, or use another @business name.</p><label class="pm-fl"><span>Name part</span><input id="e1" value="${esc(A.email.split('@')[0])}" maxlength="30"></label><label class="pm-fl"><span>Business name part (ends in .com)</span><input id="e2" value="${esc(A.dom)}" maxlength="20"></label><button class="pm-add wide" data-ok>Use this email</button>` });
-        sh.body.addEventListener('click', ev => { if (!ev.target.closest('[data-ok]')) return; const a = $('#e1', sh.body).value.toLowerCase().replace(/[^a-z0-9.\-_]/g, ''), d = $('#e2', sh.body).value.toLowerCase().replace(/[^a-z0-9\-]/g, '');
-          if (!a || !d) return bad($('#e1', sh.body).parentNode); if (S.staff.some(x => x.email === `${a}@${d}.com`)) return toast('That email is taken'); A.dom = d; A.email = `${a}@${d}.com`; sh.close(); email(); });
-      };
+      o.step({ t: `${fn()}’s contact details`, s: 'Add a real contact email if you have one. This saves a roster entry only; it does not create a staff login.', back: who,
+        body: fld('se', 'Contact email (optional)', { type: 'email', max: 120, v: A.email }),
+        foot: pill('Save team member', 'data-fin') });
       $('[data-fin]', o.el).onclick = async () => {
-        const salt = Math.random().toString(36).slice(2), st = { id: 's' + Date.now().toString(36), name: A.name, role: A.role, branch: A.branch, email: A.email, salt, pin: await sha(salt + ':' + A.pin), at: Date.now() };
+        const email = $('#se', o.el).value.trim().toLowerCase();
+        if (email && !/^[^\\s@]+@[^\\s@]+\\.[^\\s@]{2,}$/.test(email)) return ferr($('#se', o.el), 'Enter a valid email address.');
+        const st = { id: 's' + Date.now().toString(36), name: A.name, role: A.role, branch: A.branch, email, at: Date.now() };
+        const btn = $('[data-fin]', o.el); btn.disabled = true;
         try {
           await StrapStore.batch(async () => {
             S.staff.push(st);
-            notify('staff', 'Staff member added', `${st.name} was added to your team roster as ${st.role}.`);
+            notify('staff', 'Team member added', `${st.name} was added to your team roster as ${st.role}.`);
           }, true);
-          o.ok('Team member added', `${esc(st.name)} is now saved in your team roster. Individual staff sign-in is not enabled yet.`, 'Back to staff', home);
+          o.ok('Team member added', `${esc(st.name)} is saved in your team roster. Individual staff sign-in is not enabled yet.`, 'Back to team roster', home);
         } catch (error) {
           S.staff = S.staff.filter(x => x.id !== st.id);
+          btn.disabled = false;
           toast(error.message || 'Could not save this team member. Please try again.');
-          o.step({ t: 'Could not save team member', s: 'Your team roster was not changed. Check your connection and retry.', noBack: true, body: '', foot: pill('Try again', 'data-fin') });
         }
       };
     };
