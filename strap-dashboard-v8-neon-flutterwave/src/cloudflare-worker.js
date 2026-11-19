@@ -34,7 +34,7 @@ export default {
       return handler(request);
     } catch (error) {
       console.error("Strap Worker bootstrap failed:", error);
-      return Response.json({ ok: false, message: "Strap is temporarily unavailable. Please try again." }, { status: 503 });
+      return Response.json({ ok: false, message: env.STRAP_DEBUG === "true" ? String(error?.stack || error?.message || error) : "Strap is temporarily unavailable. Please try again." }, { status: 503 });
     }
   }
 };
