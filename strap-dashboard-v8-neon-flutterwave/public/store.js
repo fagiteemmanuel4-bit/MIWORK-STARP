@@ -209,7 +209,11 @@ window.StrapStore = (() => {
       catch (error) { return { ok: false, msg: 'The PIN was created but workspace sync failed. Refresh and check Settings before retrying.' }; }
     },
     async checkPin(pin) {
-      if (S.pin?.configured) { const result = await api.checkPin(pin); return !!result.valid; }
+      if (S.pin?.configured) {
+        const result = await api.checkPin(pin);
+        if (!result.ok) throw new Error(result.msg || 'Could not verify your activity PIN. Check your connection and try again.');
+        return !!result.valid;
+      }
       if (S.pin?.hash) return (await hashPin(pin, S.pin.salt)) === S.pin.hash;
       return false;
     },
