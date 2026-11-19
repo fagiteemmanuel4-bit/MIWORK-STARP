@@ -74,19 +74,25 @@
   const data = {
     get(key, fallback) { return Object.prototype.hasOwnProperty.call(state.data, key) ? state.data[key] : fallback; },
     async set(key, value) {
-      const previous = writeQueues.get(key) || Promise.resolve();
-      const next = previous.catch(() => {}).then(async () => {
-        const result = await request('/api/data', { method: 'PUT', body: JSON.stringify({ data: { [key]: value } }) });
-        state.data[key] = value;
+      return data.setMany({ [key]: value });
+    },
+    async setMany(values) {
+      if (!values || typeof values !== 'object' || Array.isArray(values)) throw new Error('A data object is required.');
+      const keys = Object.keys(values);
+      if (!keys.length) return { ok: true };
+      const previous = Promise.all(keys.map(key => (writeQueues.get(key) || Promise.resolve()).catch(() => {})));
+      const next = previous.then(async () => {
+        const result = await request('/api/data', { method: 'PUT', body: JSON.stringify({ data: values }) });
+        Object.assign(state.data, values);
         return result;
       });
-      writeQueues.set(key, next);
+      keys.forEach(key => writeQueues.set(key, next));
       try { return await next; }
       catch (error) {
-        window.dispatchEvent(new CustomEvent('strap:persistence-error', { detail: { key, message: error.message } }));
+        window.dispatchEvent(new CustomEvent('strap:persistence-error', { detail: { keys, message: error.message } }));
         throw error;
       } finally {
-        if (writeQueues.get(key) === next) writeQueues.delete(key);
+        keys.forEach(key => { if (writeQueues.get(key) === next) writeQueues.delete(key); });
       }
     },
     async flush() { await Promise.all([...writeQueues.values()]); },
