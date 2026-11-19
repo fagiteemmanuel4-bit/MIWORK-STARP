@@ -19,13 +19,19 @@ window.StrapStore = (() => {
 
   const api = {
     DEMO: false,
-    async sendCode(email, purpose = 'verify') {
-      try { await window.StrapAPI.request('/api/auth/verification/send', { method: 'POST', body: JSON.stringify({ email, purpose }) }); return { ok: true }; }
-      catch (e) { return { ok: false, msg: e.message }; }
+    async sendCode(email) {
+      try {
+        const { error } = await window.StrapNeonAuth.client.emailOtp.sendVerificationOtp({ email, type: 'email-verification' });
+        if (error) throw error;
+        return { ok: true };
+      } catch (e) { return { ok: false, msg: e.message || 'Could not send the Neon verification code.' }; }
     },
-    async verifyCode(email, code, purpose = 'verify') {
-      try { return await window.StrapAPI.request('/api/auth/verification/verify', { method: 'POST', body: JSON.stringify({ email, code, purpose }) }); }
-      catch (e) { return { ok: false, msg: e.message }; }
+    async verifyCode(email, code) {
+      try {
+        const { error } = await window.StrapNeonAuth.client.emailOtp.checkVerificationOtp({ email, otp: code, type: 'email-verification' });
+        if (error) throw error;
+        return { ok: true };
+      } catch (e) { return { ok: false, msg: e.message || 'The verification code is invalid.' }; }
     },
     async savePin(pinHash) { return { ok: true }; },
     async changePassword(current, next) {
