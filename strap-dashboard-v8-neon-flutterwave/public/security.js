@@ -50,7 +50,13 @@ window.StrapSec = (() => {
         if (busy || val.length >= 4 || S.lockLeft()) return;
         val += d; paint(); fx('tap');
         if (val.length < 4) return;
-        busy = true; const ok = await S.checkPin(val);
+        busy = true;
+        let ok;
+        try { ok = await S.checkPin(val); }
+        catch (error) {
+          busy = false; val = ''; paint(); err.textContent = error.message || 'We could not verify your PIN. Check your connection and try again.';
+          startLock(); return;
+        }
         if (ok) { S.pinOk(); fx('ok'); dots.forEach(x => x.classList.add('ok')); await sleep(260); close('ok'); return; }
         S.pinFail(); fx('err'); w.classList.add('bad'); dots.forEach(x => x.classList.add('x')); err.textContent = 'That PIN isn’t right. Try again.';
         await sleep(520); w.classList.remove('bad'); dots.forEach(x => x.classList.remove('x')); val = ''; paint(); busy = false; startLock();
