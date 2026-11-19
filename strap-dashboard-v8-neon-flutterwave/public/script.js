@@ -1,3 +1,4 @@
+/* Preview deployment trigger: Neon direct email sign-in fix. */
 (() => {
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
