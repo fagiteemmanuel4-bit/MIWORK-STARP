@@ -65,6 +65,10 @@ app.use('/api/auth', rateLimit({ windowMs: 15 * 60_000, limit: 60, standardHeade
 
 const randomToken = () => crypto.randomBytes(32).toString('base64url');
 const emailNorm = value => String(value || '').trim().toLowerCase();
+const safeEqual = (a, b) => {
+  const aa = Buffer.from(String(a)), bb = Buffer.from(String(b));
+  return aa.length === bb.length && crypto.timingSafeEqual(aa, bb);
+};
 const cleanText = (v, max = 160) => String(v ?? '').trim().slice(0, max);
 const fail = (res, status, message) => res.status(status).json({ ok: false, message });
 const asyncRoute = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
