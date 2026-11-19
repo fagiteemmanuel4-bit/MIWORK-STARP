@@ -26,6 +26,8 @@ window.StrapShop = (() => {
 
   function open(cfg, o = {}) {
     const all = o.products || [], money = n => F.money(n, cfg.currency), ship = cfg.shipping || {};
+    const standalone = !!o.standalone;
+    const liveCheckout = standalone && o.live === true && !!o.slug;
     const prods = () => F.catalog(cfg, all), find = id => prods().find(p => String(p.id) === String(id));
     const soldOut = p => !!(p.tracked && !p.sellWhenOut && (+p.qty || 0) <= 0), maxQty = p => p.tracked && !p.sellWhenOut ? Math.max(0, +p.qty || 0) : 99;
     const groups = p => (p.options || []).filter(g => g && g.name && g.values && g.values.length);
@@ -40,9 +42,14 @@ window.StrapShop = (() => {
     const freeOver = +ship.freeOver || 0, isFree = () => freeOver > 0 && net() >= freeOver, fee = () => isFree() ? 0 : (+ship.fee || 0), total = () => net() + (method === 'delivery' ? fee() : 0);
     const vtxt = v => Object.values(v).join(' · ');
 
-    const app = document.createElement('section'); app.className = 'sh-app'; app.setAttribute('style', F.vars(cfg.theme || {}));
-    app.innerHTML = `<div class="sh-sc sh-home on"><header class="sh-bar"><button type="button" class="sh-bx" data-act="close" aria-label="Close preview">${ico('close', 18, 2.4)}</button><div class="sh-url">${ico('lock', 13, 2.4)}<span>${esc(o.url || host)}</span></div><span class="sh-pv">Preview</span></header><div class="sh-hbody">${F.wrap(cfg, all)}</div></div>`;
-    document.body.appendChild(app); document.body.classList.add('pm-open'); void app.offsetWidth; app.classList.add('on');
+    const app = document.createElement('section');
+    app.className = 'sh-app' + (standalone ? ' sh-standalone' : '');
+    app.setAttribute('style', F.vars(cfg.theme || {}));
+    const previewBar = standalone ? '' : `<header class="sh-bar"><button type="button" class="sh-bx" data-act="close" aria-label="Close preview">${ico('close', 18, 2.4)}</button><div class="sh-url">${ico('lock', 13, 2.4)}<span>${esc(o.url || host)}</span></div><span class="sh-pv">Preview</span></header>`;
+    app.innerHTML = `<div class="sh-sc sh-home on">${previewBar}<div class="sh-hbody">${F.wrap(cfg, all)}</div></div>`;
+    (o.root || document.body).appendChild(app);
+    if (!standalone) document.body.classList.add('pm-open');
+    void app.offsetWidth; app.classList.add('on');
     const stack = [];
     const paint = () => { const n = count(); $$('[data-cart-count]', app).forEach(e => { e.textContent = n; e.classList.toggle('z', !n); e.classList.remove('bump'); void e.offsetWidth; e.classList.add('bump'); }); };
     const toast = (msg, act) => { $$('.sh-toast', app).forEach(t => t.remove()); const t = document.createElement('div'); t.className = 'sh-toast'; t.innerHTML = `<span>${msg}</span>${act ? `<button type="button" data-act="cart">${act}</button>` : ''}`; app.appendChild(t); void t.offsetWidth; t.classList.add('on'); setTimeout(() => { t.classList.remove('on'); setTimeout(() => t.remove(), 300); }, 2600); };
@@ -127,21 +134,48 @@ window.StrapShop = (() => {
         <section class="sh-card"><h3>Payment</h3><div class="sh-pays">${PAY.map(([k, t, d]) => `<button type="button" class="sh-pay${pay === k ? ' on' : ''}" data-act="pay" data-v="${k}"><i class="sh-rd"></i><div><b>${t}</b><small>${d}</small></div></button>`).join('')}<div class="sh-pay dis"><i class="sh-rd"></i><div><b>Card</b><small>Coming soon</small></div></div></div></section>
         <section class="sh-card"><h3>Your order</h3><ul class="sh-ol">${lines().map(l => `<li>${thumb(l.p, 'xs')}<div><b>${esc(l.p.title)}</b><small>${l.qty} × ${esc(vtxt(l.v) || 'Standard')}</small></div><strong>${money(l.p.price * l.qty)}</strong></li>`).join('')}</ul>
           <div class="sh-sum flat"><div><span>Subtotal</span><b>${money(sub())}</b></div>${disc() ? `<div class="ok"><span>Discount</span><b>-${money(disc())}</b></div>` : ''}<div><span>Delivery</span><b id="ck-fee">${method === 'pickup' ? 'Free' : (isFree() ? 'Free' : (+ship.fee ? money(ship.fee) : 'Confirmed by the store'))}</b></div><div class="t"><span>Total</span><b id="ck-total">${money(total())}</b></div></div></section>
-        <p class="sh-demo">Checkout is not available until this storefront is connected to a live order endpoint.</p></div>
-        <div class="sh-cta"><div class="sh-ctp"><small>Total</small><b data-ct>${money(total())}</b></div>${big('Preview only', arrow, 'preview', 'disabled')}</div>`,
-        el => { $$('input,textarea', el).forEach(i => i.addEventListener('input', () => { const m = { 'ck-name': 'name', 'ck-phone': 'phone', 'ck-email': 'email', 'ck-addr-i': 'addr' }[i.id]; if (m) form[m] = i.value; const f = i.closest('.sh-f'); f && f.classList.remove('bad'); })); });
+        <p class="sh-demo">${liveCheckout ? 'Your order will be sent securely to the store. No card payment is taken here; the seller will confirm delivery and payment.' : 'This is a preview. Live order placement is available on a published Strap storefront.'}</p></div>
+        <div class="sh-cta"><div class="sh-ctp"><small>Total</small><b data-ct>${money(total())}</b></div>${liveCheckout ? big('Place order', arrow, 'place') : big('Preview only', arrow, 'preview', 'disabled')}</div>`,
+        el => { $('input,textarea', el).forEach(i => i.addEventListener('input', () => { const m = { 'ck-name': 'name', 'ck-phone': 'phone', 'ck-email': 'email', 'ck-addr-i': 'addr' }[i.id]; if (m) form[m] = i.value; const f = i.closest('.sh-f'); f && f.classList.remove('bad'); })); });
     }
     async function place(btn) {
       const el = stack[stack.length - 1], bad = (id, m) => { const f = $(`[data-f=${id}]`, el); f.classList.add('bad'); $('em', f).textContent = m; return f; };
       $$('.sh-f', el).forEach(f => f.classList.remove('bad'));
       const e = [!(form.name.trim().length >= 2) && bad('name', 'Enter your name'), form.phone.replace(/\D/g, '').length < 7 && bad('phone', 'Enter a valid phone number'), form.email.trim() && !/^\S+@\S+\.\S+$/.test(form.email.trim()) && bad('email', 'Enter a valid email'), method === 'delivery' && form.addr.trim().length < 5 && bad('addr', 'Enter your delivery address')].filter(Boolean);
       if (e.length) { K.fx('err'); e[0].scrollIntoView({ block: 'center', behavior: 'smooth' }); return; }
-      btn.disabled = true; btn.classList.add('load'); $('span', btn).textContent = 'Placing order…'; await sleep(1100);
-      const rows = lines().map(l => ({ id: l.p.id, title: l.p.title + (Object.keys(l.v).length ? ' · ' + vtxt(l.v) : ''), price: +l.p.price || 0, qty: l.qty, image: first(l.p) && !/^data:/.test(first(l.p)) ? first(l.p) : '' }));
-      const ord = S.addOrder({ customer: { name: form.name.trim(), phone: form.phone.trim(), email: form.email.trim() }, address: method === 'delivery' ? form.addr.trim() : 'Pickup at store', note, method, payment: pay, lines: rows, subtotal: sub(), discount: disc(), promo: promo ? promo.code : '', delivery: method === 'delivery' ? fee() : 0, total: total() });
-      try { StrapFeatures.notify('sale', 'New online order ' + ord.id, `${form.name.trim()} ordered ${count()} item${count() === 1 ? '' : 's'} (${money(ord.total)}).`); } catch (er) {}
-      const snap = { ord, lines: lines().map(l => ({ ...l })), name: form.name.trim().split(/\s+/)[0] };
-      cart.clear(); promo = null; note = ''; persist(); paint(); o.onOrder && o.onOrder(ord); K.fx('ok'); done(snap);
+      if (!liveCheckout) { toast('This storefront is in preview mode.'); return; }
+      btn.disabled = true; btn.classList.add('load'); $('span', btn).textContent = 'Placing order…';
+      const snapshotLines = lines().map(l => ({ ...l, v: { ...l.v }, p: { ...l.p } }));
+      const payload = {
+        customer: { name: form.name.trim(), phone: form.phone.trim(), email: form.email.trim() },
+        address: method === 'delivery' ? form.addr.trim() : 'Pickup at store',
+        note, method, payment: pay, promo: promo ? promo.code : '',
+        items: snapshotLines.map(l => ({ id: String(l.p.id), qty: l.qty, options: l.v }))
+      };
+      let result;
+      try {
+        const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 20000);
+        try {
+          const response = await fetch('/api/public/store/' + encodeURIComponent(o.slug) + '/orders', {
+            method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+            body: JSON.stringify(payload), signal: controller.signal
+          });
+          result = await response.json().catch(() => ({}));
+          if (!response.ok || !result.order) {
+            const error = new Error(result.message || 'We could not place your order. Please try again.');
+            error.status = response.status; throw error;
+          }
+        } finally { clearTimeout(timer); }
+      } catch (error) {
+        btn.disabled = false; btn.classList.remove('load');
+        $('span', btn).textContent = 'Place order';
+        const message = error.name === 'AbortError' ? 'The request timed out. Check your connection and try again.' : error.message;
+        toast(message || 'We could not place your order.');
+        return;
+      }
+      const ord = result.order;
+      const snap = { ord, lines: snapshotLines, name: form.name.trim().split(/\s+/)[0] };
+      cart.clear(); promo = null; note = ''; persist(); paint(); K.fx('ok'); done(snap);
     }
     function done({ ord, lines: ls, name }) {
       mount('sh-done', () => `<div class="sh-scroll"><div class="sh-win"><svg class="sh-ok" viewBox="0 0 120 120" aria-hidden="true"><circle class="a" cx="60" cy="60" r="52" fill="var(--a)"/><circle class="b" cx="60" cy="60" r="52" fill="none" stroke="var(--ink)" stroke-width="3"/><path class="c" d="M38 62l15 15 30-33" fill="none" stroke="var(--ac)" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -149,7 +183,7 @@ window.StrapShop = (() => {
         <button type="button" class="sh-ref" data-copy="${esc(ord.tracking)}"><small>Order</small><b>${ord.id}</b><i></i><small>Tracking</small><b>${esc(ord.tracking)}</b>${ico('copy', 16, 2)}</button>
         <ol class="sh-tl"><li class="on"><i></i><div><b>Order received</b><small>Just now</small></div></li><li><i></i><div><b>Being prepared</b><small>The store is getting it ready</small></div></li><li><i></i><div><b>${ord.method === 'pickup' ? 'Ready for pickup' : 'Out for delivery'}</b><small>${ord.method === 'pickup' ? esc((cfg.contact && cfg.contact.address) || 'At the store') : esc(ord.address)}</small></div></li></ol>
         <div class="sh-card flat"><ul class="sh-ol">${ls.map(l => `<li>${thumb(l.p, 'xs')}<div><b>${esc(l.p.title)}</b><small>${l.qty} × ${esc(vtxt(l.v) || 'Standard')}</small></div><strong>${money(l.p.price * l.qty)}</strong></li>`).join('')}</ul><div class="sh-sum flat"><div class="t"><span>Total · ${ord.payment === 'cod' ? 'Pay on delivery' : 'Bank transfer'}</span><b>${money(ord.total)}</b></div></div></div>
-        <p class="sh-demo">Order preview only. No payment was collected.</p></div></div><div class="sh-cta">${big('Continue shopping', arrow, 'home')}</div>`);
+        <p class="sh-demo">Your order was saved with the store. The seller will contact you to confirm the order and payment. This checkout does not collect card payments.</p></div></div><div class="sh-cta">${big('Continue shopping', arrow, 'home')}</div>`);
     }
 
     /* ---------------- events ---------------- */
@@ -164,7 +198,7 @@ window.StrapShop = (() => {
       const ad = e.target.closest('[data-add]'); if (ad) { const p = find(ad.dataset.add); return p && quick(p); }
       const pb = e.target.closest('[data-p]'); if (pb) { const p = find(pb.dataset.p); return p && detail(p); }
       const a = e.target.closest('[data-act]'); if (!a) return; const act = a.dataset.act, el = top(), d = el && el._d;
-      if (act === 'close') return close(); if (act === 'back') return pop(); if (act === 'home') return popTo(0); if (act === 'preview') return toast('Live checkout is not configured for this storefront yet.');
+      if (act === 'close') { if (standalone) return; return close(); } if (act === 'back') return pop(); if (act === 'home') return popTo(0); if (act === 'preview') return toast('Open the published store URL to place a live order.');
       if (act === 'cart') return goCart();
       if (act === 'open') { const p = find(a.dataset.id); return p && detail(p); }
       if (act === 'up') { const p = find(a.dataset.id); if (!p) return; if (groups(p).length) return detail(p); addLine(p, {}, 1); return refreshCart(); }
@@ -187,6 +221,7 @@ window.StrapShop = (() => {
     });
     app.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.id === 'sh-code') { e.preventDefault(); $('[data-act=pra]', top()).click(); } });
     paint();
+    if (standalone && o.productId) { const product = find(o.productId); if (product) detail(product); }
   }
   return { open };
 })();
