@@ -58,7 +58,7 @@ jobs:
           printf "%s\\n" "$health"
           printf "%s" "$health" | grep -q '"database":"connected"'
           curl --fail --show-error --silent "$PREVIEW_URL/" -o /tmp/strap-root.html
-grep -qi "<html" /tmp/strap-root.html
+          grep -qi "<html" /tmp/strap-root.html
           echo "Checking dashboard HTML route (including Cloudflare's clean-URL redirect)"
           dashboard_result="$(curl --fail --show-error --silent --output /tmp/strap-dashboard.html --write-out "%{http_code} %{url_effective}" "$PREVIEW_URL/dashboard")"
           echo "Dashboard response: $dashboard_result"
@@ -68,17 +68,17 @@ grep -qi "<html" /tmp/strap-root.html
           curl --fail --show-error --silent "$PREVIEW_URL/features.js" -o /tmp/strap-features.js
           grep -q "S.notifs = Array.isArray" /tmp/strap-features.js
           curl --fail --show-error --silent "$PREVIEW_URL/store-runtime.js" -o /tmp/strap-store-runtime.js
-grep -q "STRAP_PUBLIC_CONTEXT" /tmp/strap-store-runtime.js
+          grep -q "STRAP_PUBLIC_CONTEXT" /tmp/strap-store-runtime.js
           curl --fail --show-error --silent "$PREVIEW_URL/robots.txt" -o /tmp/strap-robots.txt
-grep -q "Sitemap:" /tmp/strap-robots.txt
+          grep -q "Sitemap:" /tmp/strap-robots.txt
           curl --fail --show-error --silent "$PREVIEW_URL/sitemap.xml" -o /tmp/strap-sitemap.xml
-grep -q "<urlset" /tmp/strap-sitemap.xml
+          grep -q "<urlset" /tmp/strap-sitemap.xml
           status="$(curl --silent --output /dev/null --write-out "%{http_code}" "$PREVIEW_URL/store/strap-preview-healthcheck")"
           test "$status" = "404"
           curl --fail --show-error --silent "$PREVIEW_URL/api/config" -o /tmp/strap-api-config.json
-grep -q '"emailProvider":"Neon Auth"' /tmp/strap-api-config.json
+          grep -q '"emailProvider":"Neon Auth"' /tmp/strap-api-config.json
           curl --fail --show-error --silent "$PREVIEW_URL/script.js" -o /tmp/strap-script.js
-grep -q '0x4AAAAAAGIY0URD6s_Mg1m1' /tmp/strap-script.js
+          grep -q '0x4AAAAAAGIY0URD6s_Mg1m1' /tmp/strap-script.js
           status="$(curl --silent --output /dev/null --write-out "%{http_code}" -X POST -H 'Content-Type: application/json' -d '{}' "$PREVIEW_URL/api/auth/register")"
           test "$status" = "403"
           status="$(curl --silent --output /dev/null --write-out "%{http_code}" "$PREVIEW_URL/api/auth/me")"
@@ -87,7 +87,7 @@ grep -q '0x4AAAAAAGIY0URD6s_Mg1m1' /tmp/strap-script.js
           status="$(curl --silent --output /dev/null --write-out "%{http_code}" -X POST -H 'Content-Type: application/json' -d '{}' "$PREVIEW_URL/api/media/presign")"
           test "$status" = "401"
           curl --fail --show-error --silent "$PREVIEW_URL/products.js" -o /tmp/strap-products.js
-grep -q "/api/media/presign" /tmp/strap-products.js
+          grep -q "/api/media/presign" /tmp/strap-products.js
           for path in .env server.mjs package.json; do
             status="$(curl --silent --output /dev/null --write-out "%{http_code}" "$PREVIEW_URL/$path")"
             test "$status" = "404"
