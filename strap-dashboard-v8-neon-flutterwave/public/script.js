@@ -9,24 +9,17 @@
   const api = {
     async signIn(email, password) {
       try {
-        // Call Neon Managed Better Auth's documented endpoint directly first.
-        // This avoids an SDK URL-construction mismatch causing a misleading 404.
-        const authBase = 'https://ep-old-night-bdy63bd2.neonauth.c-8.us-east-2.aws.neon.tech/neondb/auth';
-        const response = await fetch(authBase + '/sign-in/email', {
-          method: 'POST',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: String(email || '').trim().toLowerCase(), password })
+        const { error } = await window.StrapNeonAuth.client.signIn.email({
+          email: String(email || '').trim().toLowerCase(),
+          password
         });
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok) {
-          const detail = payload.message || payload.error?.message || 'Neon Auth sign-in failed (HTTP ' + response.status + ').';
-          throw new Error(detail);
-        }
+        if (error) throw error;
+        // Retrieve the Neon JWT through the supported client.token() method,
+        // then create/link the Strap application profile on the same session.
         await window.StrapAPI.request('/api/auth/sync', { method: 'POST', body: '{}' });
         return { ok: true };
       } catch (e) {
-        return { ok: false, msg: e?.message || 'Sign-in failed. Please try again.' };
+        return { ok: false, msg: e?.message || e?.error?.message || 'Sign-in failed. Please try again.' };
       }
     },
     async sendCode(email, purpose = 'verify') {
