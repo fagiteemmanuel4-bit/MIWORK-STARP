@@ -104,3 +104,12 @@
 .sh-app .sh-big span,.sh-app .sh-big b,.sh-toast span,.sh-toast button{white-space:nowrap}.sh-app .sh-big{gap:10px;padding:0 16px;font-size:16px}
 .sh-cart .sh-h2{margin:26px 16px 14px}.sh-cart .sh-rail{margin:0;padding:2px 16px 6px}
 .sh-ref{display:inline-flex;align-items:center;gap:8px;max-width:calc(100% - 32px)}.sh-ref svg{flex:none}.sh-ol{text-align:left}
+
+/* Published public storefront: occupy the page instead of the dashboard preview overlay. */
+.sh-app.sh-standalone{position:relative;inset:auto;z-index:auto;height:100dvh;min-height:100vh;opacity:1;transition:none;border-radius:0;overflow:hidden}
+.sh-app.sh-standalone .sh-home{position:absolute;inset:0;height:100%;overflow:hidden;transform:none!important}
+.sh-app.sh-standalone .sh-home .sh-hbody{height:100%;overflow-y:auto;overscroll-behavior:contain}
+.sh-app.sh-standalone .sh-sc:not(.sh-home){position:absolute;inset:0;height:100%}
+.sh-app.sh-standalone .sh-hbody .stf{min-height:100vh}
+.sh-app.sh-standalone .stf-top{position:sticky;top:0;z-index:6}
+@supports not (height:100dvh){.sh-app.sh-standalone{height:100vh}}
