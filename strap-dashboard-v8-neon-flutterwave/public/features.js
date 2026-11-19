@@ -276,9 +276,9 @@ window.StrapFeatures = (() => {
     o.step({ t: 'Team roster', s: `${S.staff.length} of ${lim().staff} team members saved${S.plan === 'free' ? ' on the free plan' : ''}. Individual staff logins are not enabled yet.`, back: null,
       body: S.staff.length ? `<div class="rws">${S.staff.map(x => `<div class="rw ro"><i class="ri">${ic('users', 22, 1.8)}</i><div><b>${esc(x.name)}</b><small>${esc(x.role)} · ${esc(x.branch ? branch(x.branch).name : 'All branches')}${x.email ? '<br>' + esc(x.email) : ''}</small></div><button type="button" class="rx" data-del="${x.id}" aria-label="Remove ${esc(x.name)}">${ic('trash', 20, 1.8)}</button></div>`).join('')}</div>` : `<div class="empt">${U.illus('customers')}<p>No team members yet. Save names, responsibilities and contact details in your team roster.</p></div>`,
       foot: pill('Add staff', 'data-add') + (S.plan === 'free' ? pill('Upgrade for branch staff', 'data-up', 'alt') : '') });
-    $('[data-add]', o.el).onclick = () => { if (S.staff.length >= lim().staff) return gate(`The free plan includes ${LIM.free.staff} staff accounts. Upgrade to Premium for more.`); addStaff(o); };
+    $('[data-add]', o.el).onclick = () => { if (S.staff.length >= lim().staff) return gate(`The free plan includes ${LIM.free.staff} team members. Upgrade to Premium for more.`); addStaff(o); };
     const up = $('[data-up]', o.el); if (up) up.onclick = () => open('premium');
-    $$('[data-del]', o.el).forEach(d => d.onclick = async () => { if (await K.confirm({ title: 'Remove this staff member?', body: 'Their login stops working immediately.', ok: 'Remove', cancel: 'Keep', icon: 'trash', danger: true })) { S.staff = S.staff.filter(x => x.id !== d.dataset.del); save(); staffHome(o); } });
+    $$('[data-del]', o.el).forEach(d => d.onclick = async () => { if (await K.confirm({ title: 'Remove this staff member?', body: 'Their team roster entry will be removed.', ok: 'Remove', cancel: 'Keep', icon: 'trash', danger: true })) { S.staff = S.staff.filter(x => x.id !== d.dataset.del); save(); staffHome(o); } });
   }
   function addStaff(o) {
     const A = { name: '', role: '', branch: null, email: '' }, fn = () => esc(A.name.split(' ')[0]);
