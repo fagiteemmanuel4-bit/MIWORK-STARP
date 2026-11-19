@@ -244,28 +244,16 @@ app.get('/api/health', asyncRoute(async (_req, res) => {
   res.json({ ok: true, database: 'connected' });
 }));
 
-app.post('/api/auth/verification/send', asyncRoute(async (req, res) => {
-  const email = emailNorm(req.body.email);
-  const purpose = ['signup', 'reset', 'verify'].includes(req.body.purpose) ? req.body.purpose : 'verify';
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return fail(res, 400, 'Enter a valid email address.');
-  if (purpose === 'signup' && !emailDeliveryConfigured && ENV.EMAIL_VERIFICATION_REQUIRED !== 'true') {
-    const exists = await pool.query('SELECT 1 FROM users WHERE email=$1', [email]);
-    if (exists.rowCount) return fail(res, 409, 'An account already exists with this email.');
-    return res.json({ ok: true, verificationRequired: false });
-  }
-  if (!emailDeliveryConfigured) return fail(res, 503, 'Email delivery is not configured yet. Please contact support.');
-  if (purpose === 'signup') {
-    const exists = await pool.query('SELECT 1 FROM users WHERE email=$1', [email]);
-    if (exists.rowCount) return fail(res, 409, 'An account already exists with this email.');
-  }
-  await issueCode(email, purpose, purpose === 'signup' ? 8 : 6);
+app.post('/api/auth/verification/send', auth, asyncRoute(async (req, res) => {
+  const email = req.user.email;
+  if (!emailDeliveryConfigured) return fail(res, 503, 'Security-code email delivery is not configured. Use your Neon Auth account settings.');
+  await issueCode(email, 'verify', 6);
   res.json({ ok: true, verificationRequired: true });
 }));
-app.post('/api/auth/verification/verify', asyncRoute(async (req, res) => {
-  const email = emailNorm(req.body.email), purpose = ['signup', 'reset', 'verify'].includes(req.body.purpose) ? req.body.purpose : 'verify';
-  const code = cleanText(req.body.code, 8);
-  if (!email || !code) return fail(res, 400, 'Enter the verification code.');
-  const ok = await verifyCode(email, purpose, code);
+app.post('/api/auth/verification/verify', auth, asyncRoute(async (req, res) => {
+  const code = cleanText(req.body.code, 6);
+  if (!/^\\d{6}$/.test(code)) return fail(res, 400, 'Enter the six-digit verification code.');
+  const ok = await verifyCode(req.user.email, 'verify', code);
   res.json({ ok });
 }));
 app.post('/api/auth/register', neonIdentity, asyncRoute(async (req, res) => {
@@ -360,36 +348,6 @@ app.post('/api/auth/sync', neonIdentity, asyncRoute(async (req, res) => {
   await createSession(result.rows[0].id, res);
   res.json({ ok: true, user: publicUser(result.rows[0]) });
 }));;
-app.post('/api/auth/login', asyncRoute(async (req, res) => {
-  const email = emailNorm(req.body.email), password = String(req.body.password || '');
-  const result = await pool.query('SELECT id,email,password_hash,full_name,photo_url FROM users WHERE email=$1 AND disabled_at IS NULL', [email]);
-  const user = result.rows[0];
-  if (!user || !(await bcrypt.compare(password, user.password_hash))) return fail(res, 401, 'Email or password is incorrect.');
-  await createSession(user.id, res);
-  const b = await pool.query('SELECT name,currency,country FROM businesses WHERE owner_id=$1 AND is_default=true LIMIT 1', [user.id]);
-  res.json({ ok: true, user: publicUser({ ...user, business_name: b.rows[0]?.name, currency: b.rows[0]?.currency, country: b.rows[0]?.country }) });
-}));
-app.post('/api/auth/password/reset', asyncRoute(async (req, res) => {
-  const email = emailNorm(req.body.email), password = String(req.body.password || '');
-  if (password.length < 10) return fail(res, 400, 'Use a password with at least 10 characters.');
-  const verified = await pool.query(
-    `SELECT 1 FROM email_verifications WHERE email=$1 AND purpose='reset' AND verified_at > now() - interval '20 minutes' ORDER BY verified_at DESC LIMIT 1`, [email]
-  );
-  if (!verified.rowCount) return fail(res, 400, 'Verify the reset code first.');
-  const result = await pool.query('UPDATE users SET password_hash=$2,updated_at=now() WHERE email=$1 RETURNING id', [email, await bcrypt.hash(password, 12)]);
-  if (!result.rowCount) return fail(res, 404, 'No account was found for that email.');
-  await pool.query('DELETE FROM sessions WHERE user_id=$1', [result.rows[0].id]);
-  res.clearCookie(COOKIE_NAME, { path: '/', ...(ENV.SESSION_COOKIE_DOMAIN ? { domain: ENV.SESSION_COOKIE_DOMAIN } : {}) });
-  res.json({ ok: true });
-}));
-app.post('/api/auth/password/change', auth, asyncRoute(async (req, res) => {
-  const current = String(req.body.current || ''), next = String(req.body.next || '');
-  const result = await pool.query('SELECT password_hash FROM users WHERE id=$1', [req.user.id]);
-  if (!result.rowCount || !(await bcrypt.compare(current, result.rows[0].password_hash))) return fail(res, 400, 'Your current password is incorrect.');
-  if (next.length < 10) return fail(res, 400, 'Use a password with at least 10 characters.');
-  await pool.query('UPDATE users SET password_hash=$2 WHERE id=$1', [req.user.id, await bcrypt.hash(next, 12)]);
-  res.json({ ok: true });
-}));
 app.post('/api/storefront/subdomain/check', auth, asyncRoute(async (req, res) => {
   const name = cleanText(req.body.name, 40).toLowerCase();
   const reserved = new Set(['www','app','api','admin','mail','shop','store','strap','support','demo','test']);
