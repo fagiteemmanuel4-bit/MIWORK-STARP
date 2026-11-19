@@ -4,8 +4,37 @@ window.StrapStore = (() => {
     sales: [], payments: [], held: [], collections: [], credits: [], seq: 0, closed: null, pin: null, lock: { n: 0, until: 0 }, receipt: null, online: null, orders: [], oseq: 1000, pageData: { customers: [], purchase: [], transfers: [], gift: [] },
     prefs: { sound: true, vibrate: true, creditReminders: true, orderAlerts: true, lowStock: true }
   });
-  let S = blank();
-  const save = () => window.StrapAPI ? window.StrapAPI.data.set('store', S) : Promise.reject(new Error('Strap storage is not ready.'));
+  let S = blank(), saveDepth = 0, saveDirty = false;
+  const save = () => {
+    if (saveDepth) { saveDirty = true; return Promise.resolve({ deferred: true }); }
+    return window.StrapAPI ? window.StrapAPI.data.set('store', S) : Promise.reject(new Error('Strap storage is not ready.'));
+  };
+  async function batch(mutator, includeFeatures = false) {
+    const storeBefore = JSON.parse(JSON.stringify(S));
+    const featuresBefore = includeFeatures && window.StrapFeatures ? JSON.parse(JSON.stringify(window.StrapFeatures.state)) : null;
+    saveDepth++; saveDirty = false;
+    try {
+      const result = await mutator();
+      saveDepth--;
+      saveDirty = false;
+      const payload = { store: S };
+      if (includeFeatures && window.StrapFeatures) payload.features = window.StrapFeatures.state;
+      await window.StrapAPI.data.setMany(payload);
+      return result;
+    } catch (error) {
+      saveDepth = Math.max(0, saveDepth - 1);
+      saveDirty = false;
+      Object.keys(S).forEach(key => { if (!(key in storeBefore)) delete S[key]; });
+      Object.assign(S, storeBefore);
+      if (featuresBefore && window.StrapFeatures?.state) {
+        const target = window.StrapFeatures.state;
+        Object.keys(target).forEach(key => { if (!(key in featuresBefore)) delete target[key]; });
+        Object.assign(target, featuresBefore);
+        window.dispatchEvent(new CustomEvent('strap:state-restored', { detail: { sections: ['store','features'] } }));
+      }
+      throw error;
+    }
+  }
   const timeout = (promise, ms, message) => Promise.race([
     promise,
     new Promise((_, reject) => setTimeout(() => reject(new Error(message)), ms))
