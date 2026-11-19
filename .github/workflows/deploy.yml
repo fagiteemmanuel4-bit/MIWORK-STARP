@@ -59,7 +59,7 @@ jobs:
           printf "%s" "$health" | grep -q '"database":"connected"'
           curl --fail --show-error --silent "$PREVIEW_URL/" | grep -qi "<html"
           echo "Checking dashboard HTML route (including Cloudflare's clean-URL redirect)"
-          dashboard_result="$(curl --location --fail --show-error --silent --output /tmp/strap-dashboard.html --write-out "%{http_code} %{url_effective}" "$PREVIEW_URL/dashboard.html")"
+          dashboard_result="$(curl --fail --show-error --silent --output /tmp/strap-dashboard.html --write-out "%{http_code} %{url_effective}" "$PREVIEW_URL/dashboard")"
           echo "Dashboard response: $dashboard_result"
           grep -q "dashboard.js?v=20261119-dashboard-fix" /tmp/strap-dashboard.html
           grep -q "features.js?v=20261119-dashboard-fix" /tmp/strap-dashboard.html
