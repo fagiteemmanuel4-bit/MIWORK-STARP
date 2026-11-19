@@ -42,6 +42,8 @@ window.StrapStore = (() => {
   async function hydrate() {
     const remote = window.StrapAPI?.data.get('store');
     if (remote && typeof remote === 'object' && !Array.isArray(remote)) Object.assign(S, remote);
+    const savedOnlineStore = window.StrapAPI?.data.get('onlineStore');
+    if (!S.online && savedOnlineStore && typeof savedOnlineStore === 'object') S.online = savedOnlineStore;
     const base = blank();
     for (const key of ['sales','payments','held','collections','credits','orders']) S[key] = Array.isArray(S[key]) ? S[key] : base[key];
     S.prefs = Object.assign({}, base.prefs, S.prefs || {});
@@ -198,21 +200,35 @@ window.StrapStore = (() => {
     reopenDay() { S.closed = null; save(); },
 
     // ----- activity PIN -----
-    hasPin() { return !!(S.pin && S.pin.hash); },
+    hasPin() { return !!(S.pin && (S.pin.configured || S.pin.hash)); },
     async setPin(pin) {
-      const salt = uid('s'), hash = await hashPin(pin, salt);
-      const r = await api.savePin(hash); if (!r.ok) return r;
-      S.pin = { salt, hash }; S.lock = { n: 0, until: 0 }; save(); return { ok: true };
+      const result = await api.savePin(pin);
+      if (!result.ok) return result;
+      S.pin = { configured: true }; S.lock = { n: 0, until: 0 };
+      try { await save(); return { ok: true }; }
+      catch (error) { return { ok: false, msg: 'The PIN was created but workspace sync failed. Refresh and check Settings before retrying.' }; }
     },
-    async checkPin(pin) { return !!S.pin && (await hashPin(pin, S.pin.salt)) === S.pin.hash; },
+    async checkPin(pin) {
+      if (S.pin?.configured) { const result = await api.checkPin(pin); return !!result.valid; }
+      if (S.pin?.hash) return (await hashPin(pin, S.pin.salt)) === S.pin.hash;
+      return false;
+    },
     lockLeft() { return Math.max(0, Math.ceil((S.lock.until - Date.now()) / 1000)); },
     pinFail() { S.lock.n++; if (S.lock.n >= 5) { S.lock = { n: 0, until: Date.now() + 30000 }; } save(); return S.lock.n; },
     pinOk() { S.lock = { n: 0, until: 0 }; save(); },
 
     // ----- online store (one JSON config) & its orders -----
     online() { return S.online; },
-    setOnline(c) { S.online = c; save(); if (c) api.saveStore(c); },
-    removeOnline() { S.online = null; S.orders = []; save(); },
+    async setOnline(c) {
+      if (!c || typeof c !== 'object') throw new Error('A valid online store configuration is required.');
+      S.online = c;
+      await window.StrapAPI.data.setMany({ store: S, onlineStore: c });
+      return S.online;
+    },
+    async removeOnline() {
+      S.online = null; S.orders = [];
+      await window.StrapAPI.data.setMany({ store: S, onlineStore: null });
+    },
     orders() { return S.orders; },
     addOrder(o) { S.oseq++; const now=Date.now(); const order = { id: 'O-' + S.oseq, ts: now, status: 'new', paid: false, channel: 'online', tracking: 'ST-' + now.toString(36).toUpperCase(), events: [{status:'new',at:now,note:'Order received'}], ...o }; S.orders.unshift(order); save(); return order; },
     setOrderStatus(id, status) { const o = S.orders.find(x => x.id === id); if (o) { o.status = status; o.events = o.events || []; o.events.push({status,at:Date.now(),note:({processing:'Order is being prepared',fulfilled:'Order marked fulfilled',cancelled:'Order cancelled'})[status]||'Order updated'}); save(); } return o; },
