@@ -12,6 +12,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: strap-cloudflare-preview
+  cancel-in-progress: true
+
 jobs:
   preview:
     runs-on: ubuntu-latest
