@@ -110,7 +110,7 @@ async function auth(req, res, next) {
     if (!result.rowCount) {
       result = await pool.query(
         `SELECT u.id,u.email,u.full_name,u.photo_url,u.created_at,
-                b.id AS business_id,b.name AS business_name,b.currency,b.country,b.plan
+                b.id AS business_id,b.name AS business_name,b.currency,b.country,b.plan,b.profile AS business_profile
          FROM users u LEFT JOIN businesses b ON b.owner_id=u.id AND b.is_default=true
          WHERE u.email=$1 AND u.neon_auth_user_id IS NULL AND u.disabled_at IS NULL LIMIT 1`,
         [identity.email]
