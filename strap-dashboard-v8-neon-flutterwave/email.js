@@ -149,7 +149,6 @@ export async function handleNeonAuthEmailWebhook(request, env) {
     message_html: `<div style="font-family:Arial,sans-serif;color:#171717;line-height:1.6"><p>${descriptions[otpType]}</p><div style="margin:24px 0;padding:18px 22px;border-radius:12px;background:#f4f4f5;text-align:center;font-size:32px;font-weight:700;letter-spacing:8px;color:#111">${otp}</div><p>This code expires at ${expiryLabel}.</p><p style="color:#71717a;font-size:13px">If you did not request this code, you can safely ignore this email.</p></div>`,
     expires_at: expiresAt,
     expiry_time: expiryLabel,
-    reply_to: 'support@strap.app'
   };
 
   let response;
