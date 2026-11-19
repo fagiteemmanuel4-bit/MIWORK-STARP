@@ -8,11 +8,34 @@
   const api = {
     async signIn(email, password) {
       try {
-        const { data, error } = await window.StrapNeonAuth.client.signIn.email({ email, password });
-        if (error) throw error;
+        const client = window.StrapNeonAuth.client;
+        let result;
+        try {
+          result = await client.signIn.email({ email, password });
+          if (result?.error) throw result.error;
+        } catch (sdkError) {
+          // Keep a standards-based fallback for the managed Better Auth endpoint.
+          // This also avoids hiding endpoint errors behind the SDK wrapper.
+          const authBase = 'https://ep-old-night-bdy63bd2.neonauth.c-8.us-east-2.aws.neon.tech/neondb/auth';
+          const response = await fetch(authBase + '/sign-in/email', {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: String(email || '').trim().toLowerCase(), password })
+          });
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok) {
+            const detail = payload.message || payload.error?.message || sdkError?.message;
+            throw new Error(detail || 'Sign-in failed (HTTP ' + response.status + ').');
+          }
+          result = { data: payload };
+        }
         await window.StrapAPI.request('/api/auth/sync', { method: 'POST', body: '{}' });
         return { ok: true };
-      } catch (e) { return { ok: false, msg: e.message || 'Email or password is incorrect.' }; }
+      } catch (e) {
+        const message = e?.message || e?.error?.message || 'Sign-in failed. Please try again.';
+        return { ok: false, msg: message };
+      }
     },
     async sendCode(email, purpose = 'verify') {
       try {
