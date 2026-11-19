@@ -231,7 +231,7 @@ window.StrapStore = (() => {
     },
     orders() { return S.orders; },
     addOrder(o) { S.oseq++; const now=Date.now(); const order = { id: 'O-' + S.oseq, ts: now, status: 'new', paid: false, channel: 'online', tracking: 'ST-' + now.toString(36).toUpperCase(), events: [{status:'new',at:now,note:'Order received'}], ...o }; S.orders.unshift(order); save(); return order; },
-    setOrderStatus(id, status) { const o = S.orders.find(x => x.id === id); if (o) { o.status = status; o.events = o.events || []; o.events.push({status,at:Date.now(),note:({processing:'Order is being prepared',fulfilled:'Order marked fulfilled',cancelled:'Order cancelled'})[status]||'Order updated'}); save(); } return o; },
+    async setOrderStatus(id, status) { const o = S.orders.find(x => x.id === id); if (o) { o.status = status; o.events = o.events || []; o.events.push({status,at:Date.now(),note:({processing:'Order is being prepared',fulfilled:'Order marked fulfilled',cancelled:'Order cancelled'})[status]||'Order updated'}); await save(); } return o; },
 
     // ----- receipt template (JSON) & prefs -----
     getReceiptRaw() { return S.receipt; },
