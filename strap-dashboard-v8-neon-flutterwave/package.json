@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node server.mjs",
     "dev": "node --watch server.mjs",
-    "check": "node --check scripts/patch-iconv-lite.cjs && node --check server.mjs && node --check src/cloudflare-worker.js && node --check public/api-client.js && node --check public/script.js && node --check public/dashboard.js && node --check public/store.js && node --check public/settings.js",
+    "check": "node --check scripts/patch-iconv-lite.cjs && node --check server.mjs && node --check src/cloudflare-worker.js && find public -maxdepth 1 -type f -name '*.js' -print0 | xargs -0 -n1 node --check",
     "postinstall": "node scripts/patch-iconv-lite.cjs"
   },
   "engines": {
