@@ -288,7 +288,9 @@ window.StrapOnline = (() => {
         w.addEventListener('click', async e => {
           const b = e.target.closest('[data-st]'); if (!b) return;
           if (b.dataset.st === 'cancelled' && !await K.confirm({ title: 'Cancel this order?', body: 'The customer won’t be notified automatically.', ok: 'Cancel order', cancel: 'Keep it', icon: 'warn', danger: true })) return;
-          S.setOrderStatus(o.id, b.dataset.st); close(); draw(); refresh(); toast('Order ' + OST[b.dataset.st][0].toLowerCase());
+          b.disabled = true; b.textContent = 'Saving…';
+          try { await S.setOrderStatus(o.id, b.dataset.st); close(); draw(); refresh(); toast('Order ' + OST[b.dataset.st][0].toLowerCase()); }
+          catch (error) { b.disabled = false; toast(error.message || 'Could not save order status.'); }
         });
       });
     }
@@ -298,11 +300,11 @@ window.StrapOnline = (() => {
       const o = e.target.closest('[data-o]'); if (o) return detail(o.dataset.o);
       const a = e.target.closest('[data-act]'); if (!a) return;
       if (a.dataset.act === 'create') ctx.go('online'); else if (a.dataset.act === 'preview') preview(S.online());
-      else if (a.dataset.act === 'refresh') { const n = (await S.api.pullOrders() || []).map(x => S.addOrder(x)).length; draw(); toast(n ? n + ' new order' + (n === 1 ? '' : 's') : 'You’re up to date'); }
+      else if (a.dataset.act === 'refresh') { const before = S.orders().length; try { const list = await S.api.pullOrders(); draw(); toast(list.length > before ? (list.length - before) + ' new order' + (list.length - before === 1 ? '' : 's') : 'Orders refreshed'); } catch (error) { toast(error.message || 'Could not refresh orders.'); } }
     });
     root.addEventListener('input',e=>{if(e.target.matches('[data-order-search]')){query=e.target.value.trim().toLowerCase();const pos=e.target.selectionStart;draw();const q=$('[data-order-search]',root);if(q){q.focus();q.setSelectionRange(pos,pos);}}});
     views.add(draw); draw();
-    return { onShow: async () => { draw(); try { const n = (await S.api.pullOrders() || []).map(x => S.addOrder(x)).length; if (n) draw(); } catch (e) {} } };
+    return { onShow: async () => { try { await S.api.pullOrders(); draw(); } catch (error) { draw(); toast(error.message || 'Orders could not be refreshed.'); } } };
   }
 
   /* =====================================================================
