@@ -496,7 +496,7 @@ app.post('/api/public/store/:slug/orders', asyncRoute(async (req, res) => {
     const productMap = new Map(visible.map(p => [String(p.id), p]));
     const manualIds = new Set(Array.isArray(config.productIds) ? config.productIds.map(String) : []);
     const customer = req.body?.customer || {}, name = cleanText(customer.name, 120), phone = cleanText(customer.phone, 40), email = emailNorm(customer.email);
-    if (name.length < 2 || phone.replace(/\D/g,'').length < 7 || (email && !/^[^\s@]+@[^\s@]+\\.[^\s@]{2,}$/.test(email))) { await client.query('ROLLBACK'); return fail(res, 400, 'Enter a valid name and phone number before placing your order.'); }
+    if (name.length < 2 || phone.replace(/\D/g,'').length < 7 || (email && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email))) { await client.query('ROLLBACK'); return fail(res, 400, 'Enter a valid name and phone number before placing your order.'); }
     const method = req.body?.method, payment = req.body?.payment;
     if (!['delivery','pickup'].includes(method) || !['cod','transfer'].includes(payment)) { await client.query('ROLLBACK'); return fail(res, 400, 'Choose a valid delivery and payment method.'); }
     const address = method === 'delivery' ? cleanText(req.body?.address, 500) : 'Pickup at store';
