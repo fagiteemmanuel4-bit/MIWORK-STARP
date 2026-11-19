@@ -54,7 +54,8 @@ window.StrapPages = (() => {
     const add = () => formSheet({ title: c.cta, fields: c.fields, cta: c.cta }, async v => {
       rows.unshift(v);
       if (id === 'gift') rows[0].push('GC-' + crypto.randomUUID().slice(0, 8).toUpperCase());
-      await StrapStore.save();
+      try { await StrapStore.save(); }
+      catch (error) { rows.shift(); throw error; }
       draw(); ctx.toast('Saved to your workspace');
     });
     function draw() {
@@ -78,7 +79,10 @@ window.StrapPages = (() => {
     const plural = k => `${k} product${k === 1 ? '' : 's'}`;
     const add = () => formSheet({ title: 'Create collection', fields: CFG.collections.fields, cta: 'Create collection' }, v => {
       if (CS.find(v[0])) return ctx.toast('You already have a collection with that name');
-      CS.add(v[0], v[1] || ''); await StrapStore.save(); draw(); ctx.toast('Collection created');
+      const created = CS.add(v[0], v[1] || '');
+      try { await StrapStore.save(); }
+      catch (error) { if (created) CS.remove(created.id); throw error; }
+      draw(); ctx.toast('Collection created');
     });
     function draw() {
       const rows = CS.all(), cta = `<button type="button" class="pm-add" data-add>${ic('plus', 20, 2.2)} Create collection</button>`;
@@ -104,7 +108,16 @@ window.StrapPages = (() => {
       if (d) {
         const c = CS.all().find(x => x.id === d.dataset.del); if (!c) return;
         const ok = await K.confirm({ title: 'Delete this collection?', body: `<b>${esc(c.name)}</b> will be removed. Your products stay in your catalogue.`, ok: 'Delete', cancel: 'Keep it', icon: 'trash', danger: true });
-        if (ok) { CS.remove(c.id); await P.dropCollection(c.name); await StrapStore.save(); draw(); ctx.toast('Collection deleted'); }
+        if (ok) {
+          try {
+            await StrapStore.batch(async () => {
+              CS.remove(c.id);
+              await P.dropCollection(c.name, false);
+            }, true);
+            window.dispatchEvent(new CustomEvent('strap:remote-data-refreshed', { detail: { sections: ['store','features'] } }));
+            draw(); ctx.toast('Collection deleted');
+          } catch (error) { ctx.toast(error.message || 'The collection could not be deleted.'); }
+        }
         return;
       }
       const r = e.target.closest('.pg-col'); if (r) { const c = CS.all().find(x => x.id === r.dataset.id); if (c) manage(c); }
