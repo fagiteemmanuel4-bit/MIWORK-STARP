@@ -158,7 +158,7 @@
       note: 'New to Strap? <a href="#" data-flow="email">Create an account</a>', next: 'lpass' },
     lpass: { t: 'Enter your password', s: () => `Signing in as ${D.lemail}`, f: [{ key: 'lpw', type: 'password', ph: 'Password', ac: 'current-password', v: v => v ? '' : 'Enter your password.' }], btn: 'Sign in',
       act: async () => api.signIn(D.lemail, D.lpw), next: 'lok' },
-    lok: { k: 'success', noBack: 1, t: 'You’re signed in', s: 'Welcome back to Strap.', label: 'Open dashboard', auto: 2200, go: () => { location.href = 'dashboard.html'; } },
+    lok: { k: 'success', noBack: 1, t: 'You’re signed in', s: 'Welcome back to Strap.', label: 'Open dashboard', auto: 2200, go: () => { location.href = '/dashboard'; } },
     fgemail: { t: 'Reset your password', s: 'Enter your account email and we’ll send you a 6 digit code.', f: [{ key: 'fgemail', type: 'email', ph: 'example@email.com', ac: 'email', def: () => D.lemail, v: emailError }], btn: 'Send code',
       act: () => api.sendCode(D.fgemail, 'reset'), next: 'fgcode' },
     fgcode: { k: 'code', purpose: 'reset', len: 6, wait: 30, mail: 'fgemail', save: 'fgcode', verify: (m, c) => api.verifyCode(m, c, 'reset'), t: 'Enter the code', s: () => `We sent a 6 digit code to ${D.fgemail}.`, next: 'fgnew' },
@@ -210,7 +210,7 @@
       act: () => api.sendCode(D.sEmail), next: 'sce' },
     sce: { k: 'code', len: 6, wait: 30, mail: 'sEmail', verify: (m, c) => api.verifyCode(m, c), pw: 1, t: 'Check your email', s: () => `We sent a 6 digit code to ${D.sEmail}.`, next: 'scp' },
     scp: { k: 'code', len: 6, wait: 30, mail: 'sPhone', verify: (m, c) => api.verifyCode(m, c), pw: 1, t: 'Check your phone', s: () => `We sent a 6 digit code by SMS to ${D.sPhone}.`, next: 'subdone' },
-    subdone: { k: 'success', noBack: 1, t: 'Premium is active', s: 'Thank you. Your branch, staff and product limits are now raised.', label: 'Back to dashboard', auto: 2800, before: () => { if (D.sEmail) D.plan = { ...D.plan, contact: { email: D.sEmail, phone: D.sPhone, verified: true } };  }, go: () => { location.href = 'dashboard.html'; } },
+    subdone: { k: 'success', noBack: 1, t: 'Premium is active', s: 'Thank you. Your branch, staff and product limits are now raised.', label: 'Back to dashboard', auto: 2800, before: () => { if (D.sEmail) D.plan = { ...D.plan, contact: { email: D.sEmail, phone: D.sPhone, verified: true } };  }, go: () => { location.href = '/dashboard'; } },
     done: { k: 'final', noBack: 1, mid: 1, t: 'You’re all set' }
   };
 
@@ -227,7 +227,7 @@
     if (old && !reduced()) { old.classList.add('leave', 'bk'); setTimeout(fin, 190); } else fin();
   }
   function go(id) { if (id === 'verified') hist = []; hist.push(id); render(id, 1); }
-  function back() { hist.pop(); hist.length ? render(hist[hist.length - 1], -1) : SUB ? (location.href = 'dashboard.html') : closeFlow(); }
+  function back() { hist.pop(); hist.length ? render(hist[hist.length - 1], -1) : SUB ? (location.href = '/dashboard') : closeFlow(); }
   const pill = (label, cls = '') => { const b = el('button', 'pill ' + cls, label); b.type = 'button'; return b; };
   const nxt = st => typeof st.next === 'function' ? st.next(D) : st.next;
   const lock = (b, on, l) => { if (on) { b.dataset.l = b.textContent; b.textContent = l || 'Please wait…'; } else if (b.dataset.l) b.textContent = b.dataset.l; b.disabled = on; };
@@ -459,7 +459,7 @@
       lock(btn, false); if (D.resetTurnstile) D.resetTurnstile(); toast(acc.msg || 'We couldn’t finish setup. Try again.'); return;
     }
     await sleep(Math.max(0, 900 - (Date.now() - t0)));
-    location.href = 'dashboard.html';
+    location.href = '/dashboard';
   }
 
   /* ===== landing: create account or log in; ?subscribe=1 opens the card screen only ===== */
