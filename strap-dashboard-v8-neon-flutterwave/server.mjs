@@ -358,7 +358,7 @@ const storeSlug = value => String(value || '').toLowerCase().normalize('NFKD').r
 const productPathSlug = product => storeSlug(product.title || 'product') + '/' + encodeURIComponent(String(product.id || ''));
 const safeStoreImage = value => {
   const url = String(value || '');
-  if (/^https?:\/\/[^\\s"'<>]+$/i.test(url)) return url;
+  if (/^https?:\/\/[^\s"'<>]+$/i.test(url)) return url;
   if (/^data:image\/(?:png|jpe?g|webp|gif);base64,[A-Za-z0-9+/=]+$/i.test(url) && url.length < 700000) return url;
   return '';
 };
@@ -383,7 +383,7 @@ async function loadPublicStore(slug, executor = pool, lock = false) {
   }
   return { userId: row.user_id, config, features, products, currency: row.currency || config.currency || CURRENCY };
 }
-const seoDescription = value => cleanText(String(value || '').replace(/<[^>]*>/g,' ').replace(/\\s+/g,' '), 300);
+const seoDescription = value => cleanText(String(value || '').replace(/<[^>]*>/g,' ').replace(/\s+/g,' '), 300);
 const productCanonical = (slug, product) => APP_URL + '/store/' + encodeURIComponent(slug) + '/products/' + encodeURIComponent(String(product.id)) + '/' + encodeURIComponent(storeSlug(product.title));
 function storefrontProductCard(slug, product, currency) {
   const image = safeStoreImage(product.image);
@@ -470,7 +470,7 @@ app.post('/api/public/store/:slug/orders', asyncRoute(async (req, res) => {
     const productMap = new Map(visible.map(p => [String(p.id), p]));
     const manualIds = new Set(Array.isArray(config.productIds) ? config.productIds.map(String) : []);
     const customer = req.body?.customer || {}, name = cleanText(customer.name, 120), phone = cleanText(customer.phone, 40), email = emailNorm(customer.email);
-    if (name.length < 2 || phone.replace(/\\D/g,'').length < 7 || (email && !/^[^\\s@]+@[^\\s@]+\\.[^\\s@]{2,}$/.test(email))) { await client.query('ROLLBACK'); return fail(res, 400, 'Enter a valid name and phone number before placing your order.'); }
+    if (name.length < 2 || phone.replace(/\D/g,'').length < 7 || (email && !/^[^\s@]+@[^\s@]+\\.[^\s@]{2,}$/.test(email))) { await client.query('ROLLBACK'); return fail(res, 400, 'Enter a valid name and phone number before placing your order.'); }
     const method = req.body?.method, payment = req.body?.payment;
     if (!['delivery','pickup'].includes(method) || !['cod','transfer'].includes(payment)) { await client.query('ROLLBACK'); return fail(res, 400, 'Choose a valid delivery and payment method.'); }
     const address = method === 'delivery' ? cleanText(req.body?.address, 500) : 'Pickup at store';
@@ -525,7 +525,7 @@ app.post('/api/public/store/:slug/orders', asyncRoute(async (req, res) => {
   finally { client.release(); }
 }));
 app.get('/robots.txt', asyncRoute(async (_req,res) => {
-  res.type('text/plain').send('User-agent: *\\nAllow: /store/\\nDisallow: /dashboard\\nDisallow: /api/\\nSitemap: ' + APP_URL + '/sitemap.xml\\n');
+  res.type('text/plain').send('User-agent: *\nAllow: /store/\nDisallow: /dashboard\nDisallow: /api/\nSitemap: ' + APP_URL + '/sitemap.xml\n');
 }));
 app.get('/sitemap.xml', asyncRoute(async (_req,res) => {
   const result = await pool.query("SELECT data->'onlineStore' AS config,data->'features' AS features FROM account_data WHERE data->'onlineStore' IS NOT NULL");
@@ -542,7 +542,7 @@ app.get('/sitemap.xml', asyncRoute(async (_req,res) => {
       urls.push('<url><loc>' + xmlEscape(productCanonical(slug,p)) + '</loc><lastmod>' + xmlEscape(new Date(c.updatedAt || c.createdAt || Date.now()).toISOString()) + '</lastmod></url>');
     }
   }
-  res.type('application/xml').send('<?xml version="1.0" encoding="UTF-8"?>\\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">' + urls.join('') + '</urlset>');
+  res.type('application/xml').send('<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">' + urls.join('') + '</urlset>');
 }));
 app.get('/store/:slug/products/:productId/:productSlug', asyncRoute(async (req,res) => {
   const slug = String(req.params.slug || '').toLowerCase(), store = await loadPublicStore(slug);
