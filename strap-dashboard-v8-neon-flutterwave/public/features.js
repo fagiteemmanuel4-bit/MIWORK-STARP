@@ -47,7 +47,6 @@ window.StrapFeatures = (() => {
       try { await window.StrapAPI.request('/api/account', { method: 'DELETE', body: JSON.stringify(payload || {}) }); return { ok: true }; }
       catch (e) { return { ok: false, msg: e.message }; }
     },
-    async createStaff(s) { return { ok: true }; },
     async checkout() { return { ok: false, msg: 'Use the hosted Flutterwave checkout to make a payment.' }; },
     async aiExtract({ text, file }) { return null; }       // return [{title,price,qty}] from Strap AI; null = use the built-in text reader
   };
@@ -303,8 +302,8 @@ window.StrapFeatures = (() => {
       a.oninput = chk; b.oninput = chk; n.onclick = () => { if (n.disabled) return; A.pin = a.value; setup(); };
     };
     const setup = async () => {
-      o.step({ t: `Setting up ${fn()}`, s: 'Creating their account', noBack: true, body: '<div class="spn"><div class="fx-spin"><i></i><b></b><span></span></div></div>' });
-      for (const m of ['Creating their account', 'Locking in their PIN', 'Choosing a work email']) { const s = $('.ss', o.el); if (!s) return; s.textContent = m; await sleep(1000); }
+      o.step({ t: `Adding ${fn()} to your team`, s: 'Saving their team profile', noBack: true, body: '<div class="spn"><div class="fx-spin"><i></i><b></b><span></span></div></div>' });
+      for (const m of ['Saving team details', 'Assigning their role', 'Preparing their roster entry']) { const s = $('.ss', o.el); if (!s) return; s.textContent = m; await sleep(450); }
       A.email = mailFor(A.name, A.dom); email();
     };
     const email = () => {
@@ -318,8 +317,17 @@ window.StrapFeatures = (() => {
       };
       $('[data-fin]', o.el).onclick = async () => {
         const salt = Math.random().toString(36).slice(2), st = { id: 's' + Date.now().toString(36), name: A.name, role: A.role, branch: A.branch, email: A.email, salt, pin: await sha(salt + ':' + A.pin), at: Date.now() };
-        await api.createStaff({ ...st, pin: undefined }); S.staff.push(st); save(); notify('staff', 'Staff added', `${st.name} can now sign in as ${st.role}.`);
-        o.ok('Staff added', `${esc(st.name)} can now sign in as ${esc(st.role)}.`, 'Back to staff', home);
+        try {
+          await StrapStore.batch(async () => {
+            S.staff.push(st);
+            notify('staff', 'Staff member added', `${st.name} was added to your team roster as ${st.role}.`);
+          }, true);
+          o.ok('Team member added', `${esc(st.name)} is now saved in your team roster. Individual staff sign-in is not enabled yet.`, 'Back to staff', home);
+        } catch (error) {
+          S.staff = S.staff.filter(x => x.id !== st.id);
+          toast(error.message || 'Could not save this team member. Please try again.');
+          o.step({ t: 'Could not save team member', s: 'Your team roster was not changed. Check your connection and retry.', noBack: true, body: '', foot: pill('Try again', 'data-fin') });
+        }
       };
     };
     privacy();
@@ -345,13 +353,25 @@ window.StrapFeatures = (() => {
         const t = ev.target, to = t.closest('[data-to]'), p = t.closest('[data-p]'), q = t.closest('[data-q]');
         if (to) { T.to = to.dataset.to; paint(); } if (p) { T.p = p.dataset.p; T.q = 1; paint(); } if (q) { T.q += +q.dataset.q; paint(); }
         if (!t.closest('[data-go]')) return; sh.close();
-        await cover('Transferring stock', async () => {
-          const from = items(), dest = items(T.to), a = from.find(x => x.id === T.p), b = dest.find(x => x.title === a.title);
-          a.qty -= T.q; if (b) b.qty = (b.qty || 0) + T.q; else dest.push({ ...a, id: 'p' + Date.now().toString(36), qty: T.q });
-          setItems(from); setItems(dest, T.to); const live = ctx.products();
-          if (live) { const arr = live.items(), la = arr.find(x => x.id === T.p); if (la) live.setQty(la.id, a.qty); }
-          S.transfers.unshift({ title: a.title, qty: T.q, from: branch().name, to: branch(T.to).name, at: Date.now() }); save(); notify('stock', 'Stock transferred', `${T.q} × ${a.title} to ${branch(T.to).name}.`);
-        }); K.fx('ok'); draw(); toast('Stock transferred');
+        try {
+          await cover('Transferring stock', async () => {
+            const fromId = S.active, toId = T.to, from = items(fromId), dest = items(toId);
+            const a = from.find(x => x.id === T.p);
+            if (!a || !Number.isInteger(T.q) || T.q < 1 || a.qty < T.q) throw new Error('The stock changed. Refresh this branch and try again.');
+            const b = dest.find(x => x.title === a.title), fromName = branch(fromId).name, toName = branch(toId).name;
+            await StrapStore.batch(async () => {
+              a.qty -= T.q;
+              if (b) b.qty = (b.qty || 0) + T.q;
+              else dest.push({ ...a, id: 'p' + Date.now().toString(36), qty: T.q });
+              await setItems(from, fromId, false);
+              await setItems(dest, toId, false);
+              S.transfers.unshift({ title: a.title, qty: T.q, from: fromName, to: toName, at: Date.now() });
+              notify('stock', 'Stock transferred', `${T.q} × ${a.title} to ${toName}.`);
+            }, true);
+          });
+          window.dispatchEvent(new CustomEvent('strap:remote-data-refreshed', { detail: { sections: ['features','store'] } }));
+          K.fx('ok'); draw(); toast('Stock transferred');
+        } catch (error) { toast(error.message || 'The stock transfer could not be saved.'); }
       });
     });
   };
@@ -536,7 +556,7 @@ window.StrapFeatures = (() => {
       if (k === 'addp') { c.go('products'); setTimeout(() => ctx.products() && ctx.products().openAdd(), 500); } else if (k === 'pin' || k === 'new-sale') c.go(k === 'pin' ? 'settings' : k); else open(k);
     });
   }
-  function bind(prod) { if (prod && prod.onChange) prod.onChange(() => setItems(prod.items())); }
+  function bind(prod) { if (prod && prod.onChange) prod.onChange(() => setItems(prod.items()).catch(error => toast(error.message || 'Could not save product changes.'))); }
 
   const FLOWS = { staff: staffFlow, branchsw: branchFlow, branches: branchFlow };
   function open(key) {
