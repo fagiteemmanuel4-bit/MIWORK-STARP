@@ -14,7 +14,7 @@ async function getAppHandler(env) {
     appHandlerPromise = import("../server.mjs").then(({ default: app }) => {
       const server = createServer(app);
       server.listen(8787);
-      return httpServerHandler({ port: 8787 });
+      return httpServerHandler(server);
     }).catch(error => {
       appHandlerPromise = null;
       throw error;
