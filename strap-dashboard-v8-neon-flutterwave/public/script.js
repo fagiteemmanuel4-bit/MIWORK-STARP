@@ -14,9 +14,17 @@
           password
         });
         if (error) throw error;
-        // Retrieve the Neon JWT through the supported client.token() method,
-        // then create/link the Strap application profile on the same session.
-        await window.StrapAPI.request('/api/auth/sync', { method: 'POST', body: '{}' });
+        // Link an existing Strap workspace. Incomplete accounts resume the
+        // original onboarding form instead of being assigned a fake default business.
+        D.email = String(email || '').trim().toLowerCase();
+        D.password = password;
+        try {
+          const synced = await window.StrapAPI.request('/api/auth/sync', { method: 'POST', body: '{}' });
+          if (synced.user && synced.user.profileComplete === false) return { ok: true, skipVerification: true };
+        } catch (syncError) {
+          if (syncError?.code !== 'PROFILE_SETUP_REQUIRED' && syncError?.payload?.code !== 'PROFILE_SETUP_REQUIRED') throw syncError;
+          return { ok: true, skipVerification: true };
+        }
         return { ok: true };
       } catch (e) {
         return { ok: false, msg: e?.message || e?.error?.message || 'Sign-in failed. Please try again.' };
@@ -157,7 +165,7 @@
     lemail: { t: 'Welcome back', s: 'Enter your email address to sign in.', f: [{ key: 'lemail', type: 'email', ph: 'example@email.com', ac: 'email', v: emailError, link: ['Forgot password?', 'fgemail'] }], btn: 'Continue',
       note: 'New to Strap? <a href="#" data-flow="email">Create an account</a>', next: 'lpass' },
     lpass: { t: 'Enter your password', s: () => `Signing in as ${D.lemail}`, f: [{ key: 'lpw', type: 'password', ph: 'Password', ac: 'current-password', v: v => v ? '' : 'Enter your password.' }], btn: 'Sign in',
-      act: async () => api.signIn(D.lemail, D.lpw), next: 'lok' },
+      act: async () => api.signIn(D.lemail, D.lpw), next: 'lok', skipVerificationNext: 'name' },
     lok: { k: 'success', noBack: 1, t: 'You’re signed in', s: 'Welcome back to Strap.', label: 'Open dashboard', auto: 2200, go: () => { location.href = '/dashboard'; } },
     fgemail: { t: 'Reset your password', s: 'Enter your account email and we’ll send you a 6 digit code.', f: [{ key: 'fgemail', type: 'email', ph: 'example@email.com', ac: 'email', def: () => D.lemail, v: emailError }], btn: 'Send code',
       act: () => api.sendCode(D.fgemail, 'reset'), next: 'fgcode' },
@@ -466,6 +474,20 @@
   $('#l-signup').addEventListener('click', () => startFlow('email'));
   $('#l-login').addEventListener('click', () => startFlow('lemail'));
   if (SUB) { land.hidden = true; flow.hidden = false; hist = []; go('subscribe'); }
+  if (new URLSearchParams(location.search).get('complete') === '1') {
+    land.hidden = true; flow.hidden = false; hist = [];
+    (async () => {
+      try {
+        await window.StrapAPI.ready;
+        await window.StrapAPI.refresh();
+        if (!window.StrapAPI.user) throw new Error('Sign in to finish setting up your workspace.');
+        if (window.StrapAPI.user.profileComplete === false) { D.email = window.StrapAPI.user.email; go('name'); }
+        else location.replace('/dashboard');
+      } catch (error) {
+        closeFlow(); toast(error.message || 'Please sign in to continue setup.');
+      }
+    })();
+  }
 
   /* ===== legal and support links: pages are being updated, so they show a short notice for now ===== */
   const NOTICE = { terms: ['Terms of Use', 'Our terms of use are being updated.'], privacy: ['Privacy Policy', 'Our privacy policy is being updated.'], support: ['Support', 'Support is currently being updated. Please check back soon.'] };
