@@ -4,6 +4,8 @@ import rateLimit from 'express-rate-limit';
 import pg from 'pg';
 import crypto from 'node:crypto';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
+import { S3Client, PutObjectCommand, DeleteObjectCommand, PutBucketCorsCommand } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -30,6 +32,23 @@ const FLW_BASE = 'https://api.flutterwave.com/v3';
 const NEON_AUTH_BASE_URL_RAW = ENV.NEON_AUTH_BASE_URL || '';
 const NEON_AUTH_BASE_URL = NEON_AUTH_BASE_URL_RAW.endsWith('/') ? NEON_AUTH_BASE_URL_RAW.slice(0, -1) : NEON_AUTH_BASE_URL_RAW;
 const NEON_AUTH_JWKS_URL = ENV.NEON_AUTH_JWKS_URL || (NEON_AUTH_BASE_URL ? `${NEON_AUTH_BASE_URL}/.well-known/jwks.json` : '');
+const MEDIA_BUCKET = ENV.NEON_S3_BUCKET || '';
+const MEDIA_ENDPOINT = ENV.NEON_S3_ENDPOINT || '';
+const MEDIA_REGION = ENV.NEON_S3_REGION || 'us-east-2';
+const MEDIA_PUBLIC_URL = MEDIA_ENDPOINT && MEDIA_BUCKET ? MEDIA_ENDPOINT + '/' + MEDIA_BUCKET : '';
+let mediaS3Client, mediaCorsPromise;
+function getMediaClient() {
+  if (!MEDIA_ENDPOINT || !MEDIA_BUCKET || !ENV.NEON_S3_ACCESS_KEY_ID || !ENV.NEON_S3_SECRET_ACCESS_KEY) throw new Error('Product image storage is not configured on this deployment.');
+  mediaS3Client ||= new S3Client({ region: MEDIA_REGION, endpoint: MEDIA_ENDPOINT, forcePathStyle: true, credentials: { accessKeyId: ENV.NEON_S3_ACCESS_KEY_ID, secretAccessKey: ENV.NEON_S3_SECRET_ACCESS_KEY }, requestChecksumCalculation: 'WHEN_REQUIRED' });
+  return mediaS3Client;
+}
+async function ensureMediaCors() {
+  if (!mediaCorsPromise) {
+    mediaCorsPromise = getMediaClient().send(new PutBucketCorsCommand({ Bucket: MEDIA_BUCKET, CORSConfiguration: { CORSRules: [{ AllowedOrigins: [APP_URL], AllowedMethods: ['GET','HEAD','PUT'], AllowedHeaders: ['content-type','x-amz-*'], ExposeHeaders: ['ETag'], MaxAgeSeconds: 3600 }] } })).catch(error => { mediaCorsPromise = null; throw error; });
+  }
+  return mediaCorsPromise;
+}
+const PUBLIC_IMAGE_TYPES = { 'image/jpeg':'jpg', 'image/png':'png', 'image/webp':'webp', 'image/avif':'avif', 'image/gif':'gif' };
 let neonJwks;
 
 app.set('trust proxy', Number(ENV.TRUST_PROXY || 1));
@@ -289,6 +308,27 @@ const hashActivityPin = async (pin, salt, iterations = 210000) => {
   return Buffer.from(new Uint8Array(bits)).toString('hex');
 };
 const weakPins = new Set(['0000','1111','2222','3333','4444','5555','6666','7777','8888','9999','1234','4321','0123','3210','1212','2580']);
+const MEDIA_MAX_BYTES = 8 * 1024 * 1024;
+app.post('/api/media/presign', auth, asyncRoute(async (req, res) => {
+  const contentType = String(req.body?.contentType || '').toLowerCase().trim();
+  const extension = PUBLIC_IMAGE_TYPES[contentType];
+  const size = Number(req.body?.size);
+  if (!extension) return fail(res, 400, 'Choose a JPG, PNG, WebP, AVIF or GIF image.');
+  if (!Number.isSafeInteger(size) || size < 1 || size > MEDIA_MAX_BYTES) return fail(res, 413, 'Product images must be 8 MB or smaller.');
+  const key = req.user.id + '/products/' + crypto.randomUUID() + '.' + extension;
+  const client = getMediaClient();
+  await ensureMediaCors();
+  const command = new PutObjectCommand({ Bucket: MEDIA_BUCKET, Key: key, ContentType: contentType, CacheControl: 'public, max-age=31536000, immutable' });
+  const uploadUrl = await getSignedUrl(client, command, { expiresIn: 300 });
+  const publicUrl = MEDIA_PUBLIC_URL + '/' + key.split('/').map(encodeURIComponent).join('/');
+  res.json({ ok: true, key, uploadUrl, method: 'PUT', headers: { 'Content-Type': contentType }, publicUrl, expiresIn: 300 });
+}));
+app.delete('/api/media/object', auth, asyncRoute(async (req, res) => {
+  const key = cleanText(req.body?.key, 1024);
+  if (!key || !key.startsWith(req.user.id + '/products/') || key.includes('..')) return fail(res, 400, 'Invalid product image reference.');
+  await getMediaClient().send(new DeleteObjectCommand({ Bucket: MEDIA_BUCKET, Key: key }));
+  res.json({ ok: true });
+}));
 app.post('/api/security/pin', auth, asyncRoute(async (req, res) => {
   const pin = String(req.body?.pin || '');
   if (!/^\d{4}$/.test(pin) || weakPins.has(pin)) return fail(res, 400, 'Choose a less predictable 4-digit PIN.');
