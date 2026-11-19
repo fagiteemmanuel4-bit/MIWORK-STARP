@@ -58,8 +58,17 @@ jobs:
           printf "%s\\n" "$health"
           printf "%s" "$health" | grep -q '"database":"connected"'
           curl --fail --show-error --silent "$PREVIEW_URL/" | grep -qi "<html"
-          echo "Checking dashboard HTML route"
-          curl --fail --show-error --silent "$PREVIEW_URL/dashboard.html" -o /tmp/strap-dashboard.html
+          echo "Diagnosing dashboard HTML route"
+          dashboard_status="$(curl --silent --show-error --output /tmp/strap-dashboard.html --dump-header /tmp/strap-dashboard.headers --write-out "%{http_code}" "$PREVIEW_URL/dashboard.html")"
+          echo "GET /dashboard.html -> HTTP $dashboard_status"
+          sed -n '1,12p' /tmp/strap-dashboard.headers
+          head -c 500 /tmp/strap-dashboard.html || true
+          echo
+          for path in /dashboard.html/ /dashboard /index.html /dashboard.js /features.js; do
+            code="$(curl --silent --show-error --output /tmp/strap-route-body --write-out "%{http_code}" "$PREVIEW_URL$path")"
+            echo "GET $path -> HTTP $code"
+          done
+          test "$dashboard_status" = "200"
           grep -q "dashboard.js?v=20261119-dashboard-fix" /tmp/strap-dashboard.html
           echo "Checking dashboard feature asset"
           curl --fail --show-error --silent "$PREVIEW_URL/features.js?v=20261119-dashboard-fix" -o /tmp/strap-features.js
