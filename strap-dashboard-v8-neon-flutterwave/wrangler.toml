@@ -14,10 +14,32 @@ id = "cf43f792e75c41b0adafce60f71ddc3b"
 
 [vars]
 STRAP_WORKERS = "true"
-STRAP_DEBUG = "true"
+STRAP_DEBUG = "false"
 NODE_ENV = "production"
 APP_URL = "https://strap-preview.strap-preview.workers.dev"
 DEFAULT_CURRENCY = "NGN"
+STRAP_TURNSTILE_SITEKEY = "0x4AAAAAAGIY0URD6s_Mg1m1"
 TRUST_PROXY = "1"
 NEON_AUTH_BASE_URL = "https://ep-old-night-bdy63bd2.neonauth.c-8.us-east-2.aws.neon.tech/neondb/auth"
 NEON_AUTH_JWKS_URL = "https://ep-old-night-bdy63bd2.neonauth.c-8.us-east-2.aws.neon.tech/neondb/auth/.well-known/jwks.json"
+
+[[ratelimits]]
+name = "API_RATE_LIMITER"
+namespace_id = "814201"
+[ratelimits.simple]
+limit = 180
+period = 60
+
+[[ratelimits]]
+name = "AUTH_REGISTER_LIMITER"
+namespace_id = "814202"
+[ratelimits.simple]
+limit = 5
+period = 60
+
+[[ratelimits]]
+name = "AUTH_SYNC_LIMITER"
+namespace_id = "814203"
+[ratelimits.simple]
+limit = 12
+period = 60
