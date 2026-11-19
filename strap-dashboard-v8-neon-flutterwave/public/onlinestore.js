@@ -15,7 +15,21 @@ window.StrapOnline = (() => {
   const copy = async t => { try { await navigator.clipboard.writeText(t); } catch (e) { const a = document.createElement('textarea'); a.value = t; document.body.appendChild(a); a.select(); try { document.execCommand('copy'); } catch (_) {} a.remove(); } };
   const rand = n => Array.from(crypto.getRandomValues(new Uint8Array(n)), b => 'abcdefghjkmnpqrstuvwxyz23456789'[b % 31]).join('');
   const toast = m => CTX && CTX.toast(m);
-  const save = c => S.setOnline(c).then(() => { refresh(); return true; }).catch(error => { toast(error.message || 'Could not save your store settings.'); return false; });
+  let saveTimer = null, latestSaveConfig = null, saveResolvers = [];
+  const save = c => {
+    latestSaveConfig = c;
+    const promise = new Promise(resolve => saveResolvers.push(resolve));
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(async () => {
+      const config = latestSaveConfig, resolvers = saveResolvers.splice(0);
+      latestSaveConfig = null; saveTimer = null;
+      let ok = false;
+      try { await S.setOnline(config); ok = true; }
+      catch (error) { toast(error.message || 'Could not save your store settings. Check your connection and try again.'); }
+      resolvers.forEach(resolve => resolve(ok));
+    }, 350);
+    return promise;
+  };
 
   /* ---------- loading screen that rolls out the next screen ---------- */
   async function cover(msg, fn) {
@@ -221,7 +235,12 @@ window.StrapOnline = (() => {
     return { rows, score, label: score >= 80 ? 'Healthy' : score >= 50 ? 'Getting there' : 'Needs attention' };
   }
   const share = async c => { const u = 'https://' + url(c); if (navigator.share) { try { await navigator.share({ title: c.name, url: u }); return; } catch (e) { if (e && e.name === 'AbortError') return; } } await copy(u); toast('Store link copied'); };
-  const setStatus = c => { c.status = c.status === 'live' ? 'paused' : 'live'; save(c); toast(c.status === 'live' ? 'Your store is open again' : 'Store paused'); };
+  const setStatus = async c => {
+    const previous = c.status;
+    c.status = previous === 'live' ? 'paused' : 'live';
+    if (await save(c)) toast(c.status === 'live' ? 'Your store is open again' : 'Store paused');
+    else c.status = previous;
+  };
 
   function page(root, ctx) {
     CTX = ctx; let menu = false;
@@ -349,8 +368,8 @@ window.StrapOnline = (() => {
     el.addEventListener('click', async e => {
       const a = e.target.closest('[data-act], [data-sec-up], [data-sec-down], [data-sec-del], [data-add-section], [data-export]'); if (!a) return; const act = a.dataset.act, v = a.dataset.v;
       if (act === 'back') { if (stack.length > 1) { stack.pop(); return draw(); } return el.close(); }
-      if (a.dataset.secUp != null || a.dataset.secDown != null || a.dataset.secDel != null) { const i=+(a.dataset.secUp??a.dataset.secDown??a.dataset.secDel); if(a.dataset.secDel!=null)c.sections.splice(i,1); else {const j=i+(a.dataset.secUp!=null?-1:1);if(j>=0&&j<c.sections.length)[c.sections[i],c.sections[j]]=[c.sections[j],c.sections[i]];} save(c);return draw(); }
-      if (a.dataset.addSection) { const t=a.dataset.addSection, defaults={announcement:{type:t,text:'Welcome to our store'},banner:{type:t,title:'A little something special',text:'Discover our latest collection.'},products:{type:t,title:'Shop our products',layout:'grid'},about:{type:t,title:'About us',text:''},contact:{type:t,title:'Contact'},testimonials:{type:t,title:'What customers say',text:'Lovely quality and service.'},faq:{type:t,title:'FAQs',question:'How long does delivery take?',answer:'Contact us for delivery details.'},policies:{type:t,title:'Store policies',text:'Contact us for returns and delivery information.'},footer:{type:t}}; if(c.sections.length>=30)return toast('Maximum 30 sections');c.sections.push(defaults[t]);save(c);return draw();}
+      if (a.dataset.secUp != null || a.dataset.secDown != null || a.dataset.secDel != null) { const i=+(a.dataset.secUp??a.dataset.secDown??a.dataset.secDel); if(a.dataset.secDel!=null)c.sections.splice(i,1); else {const j=i+(a.dataset.secUp!=null?-1:1);if(j>=0&&j<c.sections.length)[c.sections[i],c.sections[j]]=[c.sections[j],c.sections[i]];} if (!(await save(c))) return; return draw(); }
+      if (a.dataset.addSection) { const t=a.dataset.addSection, defaults={announcement:{type:t,text:'Welcome to our store'},banner:{type:t,title:'A little something special',text:'Discover our latest collection.'},products:{type:t,title:'Shop our products',layout:'grid'},about:{type:t,title:'About us',text:''},contact:{type:t,title:'Contact'},testimonials:{type:t,title:'What customers say',text:'Lovely quality and service.'},faq:{type:t,title:'FAQs',question:'How long does delivery take?',answer:'Contact us for delivery details.'},policies:{type:t,title:'Store policies',text:'Contact us for returns and delivery information.'},footer:{type:t}}; if(c.sections.length>=30)return toast('Maximum 30 sections');c.sections.push(defaults[t]);if (!(await save(c))) return;return draw();}
       if (a.dataset.export) { const data=a.dataset.export==='json'?JSON.stringify({format:'strap-template',version:1,config:{v:c.v||2,template:c.template,theme:c.theme,sections:c.sections}},null,2):F.toXml({v:c.v||2,template:c.template,theme:c.theme,sections:c.sections}); const blob=new Blob([data],{type:a.dataset.export==='json'?'application/json':'application/xml'}),u=URL.createObjectURL(blob),ln=document.createElement('a');ln.href=u;ln.download='strap-store-template.'+a.dataset.export;ln.click();URL.revokeObjectURL(u);return toast('Template exported');}
       if (act === 'to') { stack.push(v); el.scrollTop = 0; return draw(); }
       if (act === 'live') { setStatus(c); return draw(); }
@@ -360,7 +379,7 @@ window.StrapOnline = (() => {
         else if (k === 'sync') { c.sync = v; if (v === 'manual' && !(c.productIds || []).length) c.productIds = []; }
         save(c); return draw();
       }
-      if (act === 'pick') { const s = new Set(c.productIds || []); s.has(v) ? s.delete(v) : s.add(v); c.productIds = [...s]; save(c); return draw(); }
+      if (act === 'pick') { const s = new Set(c.productIds || []); s.has(v) ? s.delete(v) : s.add(v); c.productIds = [...s]; if (!(await save(c))) return; return draw(); }
       if (act === 'saved') {
         const g = k => $(`[data-s=${k}]`, el).value.trim();
         if (g('name').length < 2) return toast('Enter your store name');
