@@ -98,8 +98,13 @@
           currency: data.currency || 'NGN', bcountry: data.bcountry || data.country,
           photoUrl, ...data
         }), headers: { 'X-Turnstile-Token': data.turnstileToken || '' } });
-        await window.StrapAPI.refresh();
-        return { ok: true, user: window.StrapAPI.user || result.user };
+        // Registration already returns the canonical user record. Avoid a second
+        // authenticated round-trip here: if /api/auth/me briefly fails after the
+        // account transaction commits, the UI must not report a successful signup
+        // as failed or invite the user to submit the setup form again.
+        if (!result?.user) throw new Error('Your account was created, but we could not load its profile. Please sign in.');
+        window.StrapAPI.setUser(result.user);
+        return { ok: true, user: result.user };
       } catch (e) { return { ok: false, msg: e.message }; }
     },
     async subscribe({ amount }) {
@@ -443,7 +448,7 @@
     try { acc = await api.createAccount(D); } catch (e) { acc = { ok: false }; }
     if (!acc.ok) {
       loader.classList.remove('on'); setTimeout(() => { loader.hidden = true; document.body.classList.remove('lock'); }, 300);
-      lock(btn, false); if (D.resetTurnstile) D.resetTurnstile(); toast('We couldn’t finish setup. Try again.'); return;
+      lock(btn, false); if (D.resetTurnstile) D.resetTurnstile(); toast(acc.msg || 'We couldn’t finish setup. Try again.'); return;
     }
     await sleep(Math.max(0, 900 - (Date.now() - t0)));
     location.href = 'dashboard.html';
