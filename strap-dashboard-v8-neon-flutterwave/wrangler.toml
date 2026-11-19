@@ -1,4 +1,4 @@
-name = "miwork-starp"
+name = "strap-preview"
 main = "src/cloudflare-worker.js"
 compatibility_date = "2026-11-19"
 compatibility_flags = ["nodejs_compat"]
@@ -15,7 +15,7 @@ id = "cf43f792e75c41b0adafce60f71ddc3b"
 [vars]
 STRAP_WORKERS = "true"
 NODE_ENV = "production"
-APP_URL = "https://miwork-starp.workers.dev"
+APP_URL = "https://strap-preview.strap-preview.workers.dev"
 DEFAULT_CURRENCY = "NGN"
 TRUST_PROXY = "1"
 NEON_AUTH_BASE_URL = "https://ep-old-night-bdy63bd2.neonauth.c-8.us-east-2.aws.neon.tech/neondb/auth"
