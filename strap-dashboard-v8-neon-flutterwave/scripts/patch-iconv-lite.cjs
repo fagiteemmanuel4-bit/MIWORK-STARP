@@ -24,7 +24,7 @@ function visit(dir) {
         }
       }
     }
-    if (entry.name === 'node_modules' || entry.name.startsWith('@') || entry.name === 'iconv-lite') {
+    if (entry.name !== '.bin' && entry.name !== '.cache') {
       visit(full);
     }
   }
