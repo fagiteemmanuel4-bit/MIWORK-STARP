@@ -640,13 +640,15 @@ window.StrapProducts = (() => {
         const rec = { ...product, id: saved.id, image: (files.find(f => f.type.startsWith('image')) || {}).url || '', files: files.map(({ name, type, url }) => ({ name, type, url })) };
         if (editing) { const i = items.findIndex(x => x.id === editing.id); if (i > -1) items[i] = rec; } else items.unshift(rec);
         renderAll(); closePage(); toast(editing ? 'Changes saved' : 'Product added');
-      } catch (err) { toast('Could not save. Try again.'); }
+      } catch (err) { toast(err.message || 'Could not save. Check your connection and try again.'); }
       btn.disabled = false; btn.textContent = idle;
     }
 
     // ----- boot -----
     renderAll();
-    window.addEventListener('strap:state-restored', () => { items = StrapFeatures.items(); renderAll(); });
+    const syncRemoteProducts = () => { items = StrapFeatures.items(); loading = false; renderAll(); };
+    window.addEventListener('strap:state-restored', syncRemoteProducts);
+    window.addEventListener('strap:remote-data-refreshed', syncRemoteProducts);
     api.getProducts().then(r => { items = r; loading = false; renderAll(); }).catch(() => { items = []; loading = false; renderAll(); });
     return {
       items: () => items, openAdd: () => openPage(), openImport, openAI,
