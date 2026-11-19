@@ -29,8 +29,16 @@ window.StrapStore = (() => {
     },
     async savePin(pinHash) { return { ok: true }; },
     async changePassword(current, next) {
-      try { await window.StrapAPI.request('/api/auth/password/change', { method: 'POST', body: JSON.stringify({ current, next }) }); return { ok: true }; }
-      catch (e) { return { ok: false, msg: e.message }; }
+      try {
+        const { error } = await window.StrapNeonAuth.client.changePassword({
+          currentPassword: current,
+          newPassword: next,
+          revokeOtherSessions: true
+        });
+        if (error) throw error;
+        await window.StrapAPI.refresh();
+        return { ok: true };
+      } catch (e) { return { ok: false, msg: e.message || 'Could not update your Neon Auth password.' }; }
     },
     async scheduleCreditReminder(credit) { return { ok: false, msg: 'Scheduled reminders need a background worker and are not enabled yet.' }; },
     get BASE_DOMAIN() { return window.StrapAPI?.config?.storeBaseDomain || location.hostname; },
