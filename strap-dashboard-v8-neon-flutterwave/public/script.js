@@ -149,7 +149,7 @@
     lemail: { t: 'Welcome back', s: 'Enter your email address to sign in.', f: [{ key: 'lemail', type: 'email', ph: 'example@email.com', ac: 'email', v: emailError, link: ['Forgot password?', 'fgemail'] }], btn: 'Continue',
       note: 'New to Strap? <a href="#" data-flow="email">Create an account</a>', next: 'lpass' },
     lpass: { t: 'Enter your password', s: () => `Signing in as ${D.lemail}`, f: [{ key: 'lpw', type: 'password', ph: 'Password', ac: 'current-password', v: v => v ? '' : 'Enter your password.' }], btn: 'Sign in',
-      act: async () => { const r = await api.signIn(D.lemail, D.lpw); if (!r.ok) r.msg = 'Email or password is incorrect.'; return r; }, next: 'lok' },
+      act: async () => api.signIn(D.lemail, D.lpw), next: 'lok' },
     lok: { k: 'success', noBack: 1, t: 'You’re signed in', s: 'Welcome back to Strap.', label: 'Open dashboard', auto: 2200, go: () => { location.href = 'dashboard.html'; } },
     fgemail: { t: 'Reset your password', s: 'Enter your account email and we’ll send you a 6 digit code.', f: [{ key: 'fgemail', type: 'email', ph: 'example@email.com', ac: 'email', def: () => D.lemail, v: emailError }], btn: 'Send code',
       act: () => api.sendCode(D.fgemail, 'reset'), next: 'fgcode' },
