@@ -233,7 +233,7 @@ window.StrapProducts = (() => {
         <div class="pm-grab"><i></i></div>
         <div class="pm-view" data-v="main">
           <div class="pm-sh"><h2>Import products</h2><button type="button" class="pm-x" data-close aria-label="Close">${ic('close', 20, 2.2)}</button></div>
-          <button type="button" class="pm-opt" data-o="csv"><span class="pm-oi">${ic('csv', 24)}</span><span class="pm-ot"><b>Import via CSV</b><small>Accepts .csv, .txt and .xls</small></span>${ic('chevR', 20, 2)}</button>
+          <button type="button" class="pm-opt" data-o="csv"><span class="pm-oi">${ic('csv', 24)}</span><span class="pm-ot"><b>Import via CSV</b><small>Accepts .csv and .txt up to 5 MB</small></span>${ic('chevR', 20, 2)}</button>
           <button type="button" class="pm-opt" data-o="sites"><span class="pm-oi">${ic('globe', 24)}</span><span class="pm-ot"><b>Import from a website</b><small>Bring your catalogue from another store</small></span>${ic('chevR', 20, 2)}</button>
         </div>
         <div class="pm-view" data-v="sites" hidden>
@@ -406,8 +406,8 @@ window.StrapProducts = (() => {
           <p class="pm-lb">Media</p>
           <div class="pm-drop">
             <div class="pm-thumbs" hidden></div>
-            <div class="pm-dacts"><button type="button" class="pm-pill" data-upload>Upload new</button><button type="button" class="pm-ghost" data-existing>Select existing</button></div>
-            <small>Choose files to preview them in this browser. To publish an image on your public store, add a permanent HTTPS image URL below.</small>
+            <div class="pm-dacts"><button type="button" class="pm-pill" data-upload>Preview a file</button><button type="button" class="pm-ghost" data-existing>Select existing</button></div>
+            <small>Local files are preview-only on this account. To save and publish an image, add a permanent HTTPS image URL below.</small>
             <input type="file" accept="image/*,video/*,.glb,.gltf" multiple hidden data-file>
           </div>
           <label class="pm-fl" style="margin-top:12px"><span>Public image URL</span><input name="imageUrl" type="url" inputmode="url" placeholder="https://images.example.com/product.jpg" autocomplete="url"></label>
