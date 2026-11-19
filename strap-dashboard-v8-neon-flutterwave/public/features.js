@@ -62,7 +62,7 @@ window.StrapFeatures = (() => {
   /* ===== per-branch products ===== */
   const ik = id => id || S.active;
   const items = id => S.itemsByBranch[ik(id)] || [];
-  const setItems = async (list, id) => { S.itemsByBranch[ik(id)] = list.map(({ media, ...p }) => p); await save(); return S.itemsByBranch[ik(id)]; };
+  const setItems = async (list, id, persist = true) => { S.itemsByBranch[ik(id)] = list.map(({ media, ...p }) => p); if (persist) await save(); return S.itemsByBranch[ik(id)]; };
   const branch = id => S.branches.find(b => b.id === (id || S.active)) || S.branches[0];
 
   /* ===== loader + roll-out screens ===== */
