@@ -79,7 +79,7 @@ async function getNeonIdentity(req) {
   if (!token || !NEON_AUTH_JWKS_URL || !NEON_AUTH_BASE_URL) return null;
   try {
     neonJwks ||= createRemoteJWKSet(new URL(NEON_AUTH_JWKS_URL));
-    const { payload } = await jwtVerify(token, neonJwks, { issuer: NEON_AUTH_BASE_URL });
+    const { payload } = await jwtVerify(token, neonJwks, { issuer: new URL(NEON_AUTH_BASE_URL).origin });
     if (!payload.sub || !payload.email) return null;
     return { id: String(payload.sub), email: emailNorm(payload.email), name: cleanText(payload.name || payload.email.split('@')[0], 120), photoUrl: typeof payload.picture === 'string' ? payload.picture : null, emailVerified: payload.email_verified === true || payload.emailVerified === true };
   } catch (error) {
