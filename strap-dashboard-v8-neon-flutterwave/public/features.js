@@ -14,7 +14,7 @@ window.StrapFeatures = (() => {
     reports: [], seeded: false, pushAsked: false, mcp: [], transfers: [], dismissed: [], itemsByBranch: {}
   });
   let S = defaults();
-  const save = () => { if (window.StrapAPI) window.StrapAPI.data.set('features', S).catch(e => console.error('Could not save feature data:', e)); };
+  const save = () => window.StrapAPI ? window.StrapAPI.data.set('features', S) : Promise.reject(new Error('Strap storage is not ready.'));
   async function hydrate() {
     const remote = window.StrapAPI?.data.get('features');
     if (remote && typeof remote === 'object' && !Array.isArray(remote)) Object.assign(S, remote);
@@ -62,7 +62,7 @@ window.StrapFeatures = (() => {
   /* ===== per-branch products ===== */
   const ik = id => id || S.active;
   const items = id => S.itemsByBranch[ik(id)] || [];
-  const setItems = (list, id) => { S.itemsByBranch[ik(id)] = list.map(({ media, ...p }) => p); save(); };
+  const setItems = async (list, id) => { S.itemsByBranch[ik(id)] = list.map(({ media, ...p }) => p); await save(); return S.itemsByBranch[ik(id)]; };
   const branch = id => S.branches.find(b => b.id === (id || S.active)) || S.branches[0];
 
   /* ===== loader + roll-out screens ===== */
@@ -492,7 +492,7 @@ window.StrapFeatures = (() => {
         if (t.closest('[data-again]')) intro();
         const rm = t.closest('[data-rm]'); if (rm) { list.splice(+rm.dataset.rm, 1); review(); }
         if (t.closest('[data-imp]')) { const room = lim().products - items().length; if (list.length > room) return gate(`The free plan holds ${LIM.free.products} products. You can add ${Math.max(0, room)} more.`); if (!useImport()) return;
-          const out = list.map((p, i) => ({ id: 'p' + Date.now().toString(36) + i, title: p.title, price: p.price, qty: p.qty, status: 'active', tracked: true })); K.fx('ok'); s.close('Adding products').then(() => { onAdd(out); toast(`${out.length} product${out.length === 1 ? '' : 's'} added`); }); }
+          const out = list.map((p, i) => ({ id: 'p' + Date.now().toString(36) + i, title: p.title, price: p.price, qty: p.qty, status: 'active', tracked: true })); K.fx('ok'); s.close('Adding products').then(async () => { try { await onAdd(out); toast(`${out.length} product${out.length === 1 ? '' : 's'} added`); } catch (error) { toast(error.message || 'Could not save the products. Try again.'); } }); }
       });
       s.el.addEventListener('change', async e => { const f = e.target.files && e.target.files[0]; if (!f) return; const txt = /text|csv|plain/.test(f.type) || /\.(csv|txt)$/i.test(f.name) ? await f.text() : ''; run({ file: f, text: txt }); });
     }));
@@ -503,9 +503,9 @@ window.StrapFeatures = (() => {
     const P = StrapProducts.api, cap = n => { if (items().length + n > lim().products) { gate(`The free plan holds ${LIM.free.products} products. Upgrade for more.`); throw new Error('limit'); } };
     P.getProducts = async () => { await sleep(350); return items(); };
     const sv = P.saveProduct, dl = P.deleteProduct, ic1 = P.importCsv, is1 = P.importFromSite;
-    P.saveProduct = async p => { const l = items(); const isNew = !p.id || !l.some(x => x.id === p.id); if (isNew) cap(1); const r = await sv(p); const i = l.findIndex(x => x.id === r.id); i < 0 ? l.unshift(r) : (l[i] = r); setItems(l); return r; };
-    P.deleteProduct = async id => { const r = await dl(id); setItems(items().filter(x => x.id !== id)); return r; };
-    const imp = fn => async (...a) => { if (!useImport()) throw new Error('limit'); const r = await fn(...a); cap(r.length); setItems([...r, ...items()]); return r; };
+    P.saveProduct = async p => { const l = items(); const isNew = !p.id || !l.some(x => x.id === p.id); if (isNew) cap(1); const r = await sv(p); const i = l.findIndex(x => x.id === r.id); i < 0 ? l.unshift(r) : (l[i] = r); await setItems(l); return r; };
+    P.deleteProduct = async id => { const r = await dl(id); await setItems(items().filter(x => x.id !== id)); return r; };
+    const imp = fn => async (...a) => { if (!useImport()) throw new Error('Import limit reached.'); const r = await fn(...a); cap(r.length); await setItems([...r, ...items()]); return r; };
     P.importCsv = imp(ic1); P.importFromSite = imp(is1);
   }
   wrapProducts();
