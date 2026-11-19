@@ -67,13 +67,22 @@ window.StrapFeatures = (() => {
   const items = id => S.itemsByBranch[ik(id)] || [];
   const isPublicAssetUrl = value => /^https?:\/\/[^\s"'<>]+$/i.test(String(value || ''));
   const setItems = async (list, id, persist = true) => {
-    S.itemsByBranch[ik(id)] = list.map(({ media, ...p }) => {
+    const key = ik(id), previous = S.itemsByBranch[key];
+    const clean = (Array.isArray(list) ? list : []).filter(p => p && typeof p === 'object').map(({ media, ...p }) => {
       const remoteFiles = Array.isArray(p.files) ? p.files.filter(f => isPublicAssetUrl(f?.url)).map(({ name, type, url }) => ({ name, type, url })) : [];
       const image = isPublicAssetUrl(p.image) ? p.image : '';
       return { ...p, image, files: remoteFiles };
     });
-    if (persist) await save();
-    return S.itemsByBranch[ik(id)];
+    S.itemsByBranch[key] = clean;
+    if (persist) {
+      try { await save(); }
+      catch (error) {
+        if (previous === undefined) delete S.itemsByBranch[key];
+        else S.itemsByBranch[key] = previous;
+        throw error;
+      }
+    }
+    return S.itemsByBranch[key];
   };
   const branch = id => S.branches.find(b => b.id === (id || S.active)) || S.branches[0];
 
