@@ -155,7 +155,7 @@ async function getNeonIdentity(req) {
     neonJwks ||= createRemoteJWKSet(new URL(NEON_AUTH_JWKS_URL));
     const { payload } = await jwtVerify(token, neonJwks, { issuer: NEON_AUTH_BASE_URL });
     if (!payload.sub || !payload.email) return null;
-    return { id: String(payload.sub), email: emailNorm(payload.email), emailVerified: payload.email_verified === true || payload.emailVerified === true };
+    return { id: String(payload.sub), email: emailNorm(payload.email), name: cleanText(payload.name || payload.email.split('@')[0], 120), photoUrl: typeof payload.picture === 'string' ? payload.picture : null, emailVerified: payload.email_verified === true || payload.emailVerified === true };
   } catch (error) {
     console.warn('[auth] Neon token rejected:', error.code || error.message);
     return null;
@@ -304,15 +304,46 @@ app.post('/api/auth/register', neonIdentity, asyncRoute(async (req, res) => {
 }));
 app.post('/api/auth/sync', neonIdentity, asyncRoute(async (req, res) => {
   if (!req.neonIdentity.emailVerified) return fail(res, 403, 'Verify your email with Neon Auth before signing in.');
-  const result = await pool.query(
-    'SELECT u.id,u.email,u.full_name,u.photo_url,u.created_at,b.name AS business_name,b.currency,b.country FROM users u LEFT JOIN businesses b ON b.owner_id=u.id AND b.is_default=true WHERE u.neon_auth_user_id=$1 OR u.email=$2 LIMIT 1',
-    [req.neonIdentity.id, req.neonIdentity.email]
+  let result = await pool.query(
+    'SELECT u.id,u.email,u.full_name,u.photo_url,u.created_at,b.name AS business_name,b.currency,b.country FROM users u LEFT JOIN businesses b ON b.owner_id=u.id AND b.is_default=true WHERE u.neon_auth_user_id=$1 LIMIT 1',
+    [req.neonIdentity.id]
   );
-  if (!result.rowCount) return fail(res, 404, 'Your email is verified, but your Strap workspace setup is incomplete. Please finish creating your workspace.');
-  await pool.query('UPDATE users SET neon_auth_user_id=$2 WHERE id=$1 AND neon_auth_user_id IS DISTINCT FROM $2', [result.rows[0].id, req.neonIdentity.id]);
+  if (!result.rowCount) {
+    result = await pool.query(
+      'SELECT u.id,u.email,u.full_name,u.photo_url,u.created_at,b.name AS business_name,b.currency,b.country FROM users u LEFT JOIN businesses b ON b.owner_id=u.id AND b.is_default=true WHERE u.email=$1 LIMIT 1',
+      [req.neonIdentity.email]
+    );
+  }
+  if (!result.rowCount) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const inserted = await client.query(
+        'INSERT INTO users(email,password_hash,full_name,photo_url,neon_auth_user_id) VALUES($1,$2,$3,$4,$5) RETURNING id,email,full_name,photo_url,created_at',
+        [req.neonIdentity.email, await bcrypt.hash(randomToken(), 12), req.neonIdentity.name, req.neonIdentity.photoUrl, req.neonIdentity.id]
+      );
+      const user = inserted.rows[0];
+      await client.query(
+        "INSERT INTO businesses(owner_id,name,currency,country,plan,is_default,profile) VALUES($1,'My Business',$2,NULL,'free',true,'{}'::jsonb)",
+        [user.id, CURRENCY]
+      );
+      await client.query("INSERT INTO account_data(user_id,data) VALUES($1,'{}'::jsonb) ON CONFLICT(user_id) DO NOTHING", [user.id]);
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      if (error.code !== '23505') throw error;
+    } finally { client.release(); }
+    result = await pool.query(
+      'SELECT u.id,u.email,u.full_name,u.photo_url,u.created_at,b.name AS business_name,b.currency,b.country FROM users u LEFT JOIN businesses b ON b.owner_id=u.id AND b.is_default=true WHERE u.neon_auth_user_id=$1 OR u.email=$2 LIMIT 1',
+      [req.neonIdentity.id, req.neonIdentity.email]
+    );
+  }
+  if (!result.rowCount) return fail(res, 409, 'We could not finish setting up your Strap profile. Please try again.');
+  if (result.rows[0].neon_auth_user_id && result.rows[0].neon_auth_user_id !== req.neonIdentity.id) return fail(res, 409, 'This email is linked to a different Strap account.');
+  await pool.query('UPDATE users SET neon_auth_user_id=$2,updated_at=now() WHERE id=$1 AND neon_auth_user_id IS DISTINCT FROM $2', [result.rows[0].id, req.neonIdentity.id]);
   await createSession(result.rows[0].id, res);
   res.json({ ok: true, user: publicUser(result.rows[0]) });
-}));
+}));;
 app.post('/api/auth/login', asyncRoute(async (req, res) => {
   const email = emailNorm(req.body.email), password = String(req.body.password || '');
   const result = await pool.query('SELECT id,email,password_hash,full_name,photo_url FROM users WHERE email=$1 AND disabled_at IS NULL', [email]);
