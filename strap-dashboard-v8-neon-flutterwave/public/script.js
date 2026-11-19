@@ -66,10 +66,14 @@
   Object.assign(api, {
     async verifySignupCode(email, code) {
       try {
-        const { error } = await window.StrapNeonAuth.client.emailOtp.verifyEmail({ email, otp: code });
+        const client = window.StrapNeonAuth.client;
+        const { error } = await client.emailOtp.verifyEmail({ email, otp: code });
         if (error) throw error;
-        const { error: signInError } = await window.StrapNeonAuth.client.signIn.email({ email, password: D.password });
-        if (signInError && !String(signInError.message || '').toLowerCase().includes('already')) throw signInError;
+        const current = await client.getSession();
+        if (!current?.data?.session) {
+          const { error: signInError } = await client.signIn.email({ email, password: D.password });
+          if (signInError) throw signInError;
+        }
         return { ok: true };
       } catch (e) { return { ok: false, msg: e.message || 'The verification code is invalid.' }; }
     },
@@ -80,8 +84,9 @@
           email: data.email, password: data.password, name: data.name, bizname: data.bizname,
           currency: data.currency || 'NGN', bcountry: data.bcountry || data.country,
           photoUrl, ...data
-        }) });
-        window.StrapAPI.setUser(result.user); return { ok: true, user: result.user };
+        }), headers: { 'X-Turnstile-Token': data.turnstileToken || '' } });
+        await window.StrapAPI.refresh();
+        return { ok: true, user: window.StrapAPI.user || result.user };
       } catch (e) { return { ok: false, msg: e.message }; }
     },
     async subscribe({ amount }) {
@@ -357,9 +362,29 @@
   }
   function kFinal(st, body, foot) {
     body.append(el('p', 'ss', `${D.bizname || 'Your business'} is ready to set up on Strap.`));
-    const b = pill('Open my workspace');
+    const challenge = el('div', 'turnstile-wrap');
+    const target = el('div', 'cf-turnstile');
+    const err = el('p', 'ferr'); err.setAttribute('role', 'alert');
+    challenge.append(target, err); body.append(challenge);
+    const b = pill('Open my workspace'); b.disabled = true;
     b.onclick = () => launch(b);
     foot.append(b);
+    let widgetId = null, attempts = 0;
+    const mount = () => {
+      if (widgetId !== null || !window.turnstile) {
+        if (widgetId === null && attempts++ < 40) setTimeout(mount, 250);
+        return;
+      }
+      widgetId = window.turnstile.render(target, {
+        sitekey: '0x4AAAAAAGIY0URD6s_Mg1m1',
+        action: 'strap_signup',
+        callback: token => { D.turnstileToken = token; err.textContent = ''; b.disabled = false; },
+        'expired-callback': () => { D.turnstileToken = ''; b.disabled = true; err.textContent = 'Security check expired. Please complete it again.'; },
+        'error-callback': () => { D.turnstileToken = ''; b.disabled = true; err.textContent = 'Security check failed to load. Refresh and try again.'; }
+      });
+    };
+    mount();
+    D.resetTurnstile = () => { D.turnstileToken = ''; b.disabled = true; if (widgetId !== null && window.turnstile) window.turnstile.reset(widgetId); };
   }
 
   /* ===== hand off to the dashboard page (dashboard.html) ===== */
@@ -377,7 +402,7 @@
     try { acc = await api.createAccount(D); } catch (e) { acc = { ok: false }; }
     if (!acc.ok) {
       loader.classList.remove('on'); setTimeout(() => { loader.hidden = true; document.body.classList.remove('lock'); }, 300);
-      lock(btn, false); toast('We couldn’t finish setup. Try again.'); return;
+      lock(btn, false); if (D.resetTurnstile) D.resetTurnstile(); toast('We couldn’t finish setup. Try again.'); return;
     }
     await sleep(Math.max(0, 900 - (Date.now() - t0)));
     location.href = 'dashboard.html';
