@@ -37,15 +37,12 @@ jobs:
       - name: Check server syntax
         run: node --check server.mjs
 
-      - name: Create Cloudflare preview
+      - name: Deploy isolated preview Worker
         id: preview
-        shell: bash
         run: |
           set -euo pipefail
-          output="$(npx --yes wrangler@latest preview --name strap-preview --worker-name miwork-starp --json)"
-          printf '%s\n' "$output"
-          preview_url="$(printf '%s' "$output" | jq -er '.preview.urls[0]')"
-          echo "url=$preview_url" >> "$GITHUB_OUTPUT"
+          npx --yes wrangler@latest deploy --name strap-preview
+          echo "url=https://strap-preview.strap-preview.workers.dev" >> "$GITHUB_OUTPUT"
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: e00174af8acd4774a87dde93f0f13b58
@@ -55,7 +52,7 @@ jobs:
         run: |
           set -euo pipefail
           secret="$(openssl rand -hex 32)"
-          printf '%s' "$secret" | npx --yes wrangler@latest preview secret put SESSION_SECRET --name strap-preview --worker-name miwork-starp
+          printf '%s' "$secret" | npx --yes wrangler@latest secret put SESSION_SECRET --name strap-preview
           unset secret
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -65,7 +62,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          curl --fail --show-error --silent "$PREVIEW_URL/api/health"
+          curl --retry 5 --retry-delay 3 --retry-connrefused --fail --show-error --silent "$PREVIEW_URL/api/health"
           echo
           curl --fail --show-error --silent "$PREVIEW_URL/" | grep -qi "<html"
         env:
