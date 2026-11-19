@@ -1,9 +1,7 @@
 import express from 'express';
 import helmet from 'helmet';
-import cookieParser from 'cookie-parser';
 import rateLimit from 'express-rate-limit';
 import pg from 'pg';
-import bcrypt from 'bcryptjs';
 import crypto from 'node:crypto';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
 import path from 'node:path';
@@ -26,8 +24,6 @@ for (const key of required) if (!ENV[key] || ENV[key].includes('replace_me')) {
 }
 const PORT = Number(ENV.PORT || 3000);
 const APP_URL = (ENV.APP_URL || `http://localhost:${PORT}`).replace(/\/$/, '');
-const COOKIE_NAME = ENV.SESSION_COOKIE_NAME || 'strap_session';
-const SESSION_DAYS = Number(ENV.SESSION_DAYS || 14);
 const CURRENCY = ENV.DEFAULT_CURRENCY || 'NGN';
 const FLW_SECRET = ENV.FLW_SECRET_KEY || '';
 const FLW_BASE = 'https://api.flutterwave.com/v3';
@@ -57,7 +53,6 @@ app.use((req, res, next) => {
   });
   req.on('error', next);
 });
-app.use(cookieParser());
 // Vercel routes all requests through the Express function so HTML, CSS, JS and API
 // requests are served by the same app root. Strip the internal rewrite prefix early,
  // before Express route matching and rate-limit middleware.
@@ -68,23 +63,12 @@ app.use((req, _res, next) => {
 app.use(rateLimit({ windowMs: 60_000, limit: 180, standardHeaders: 'draft-7', legacyHeaders: false }));
 app.use('/api/auth', rateLimit({ windowMs: 15 * 60_000, limit: 60, standardHeaders: 'draft-7', legacyHeaders: false }));
 
-const hash = value => crypto.createHash('sha256').update(String(value)).digest('hex');
 const randomToken = () => crypto.randomBytes(32).toString('base64url');
 const emailNorm = value => String(value || '').trim().toLowerCase();
 const cleanText = (v, max = 160) => String(v ?? '').trim().slice(0, max);
 const fail = (res, status, message) => res.status(status).json({ ok: false, message });
 const asyncRoute = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
-async function createSession(userId, res) {
-  const token = randomToken();
-  const expires = new Date(Date.now() + SESSION_DAYS * 864e5);
-  await pool.query('INSERT INTO sessions(user_id, token_hash, expires_at) VALUES($1,$2,$3)', [userId, hash(token), expires]);
-  res.cookie(COOKIE_NAME, token, {
-    ...(ENV.SESSION_COOKIE_DOMAIN ? { domain: ENV.SESSION_COOKIE_DOMAIN } : {}),
-    httpOnly: true, secure: ENV.NODE_ENV === 'production',
-    sameSite: 'lax', path: '/', expires
-  });
-}
 async function getNeonIdentity(req) {
   const authorization = String(req.headers.authorization || '');
   const token = authorization.slice(0, 7).toLowerCase() === 'bearer ' ? authorization.slice(7).trim() : '';
@@ -109,50 +93,33 @@ async function neonIdentity(req, res, next) {
 }
 async function auth(req, res, next) {
   try {
-    const hasBearer = /^Bearer\s+\S+/i.test(String(req.headers.authorization || ''));
     const identity = await getNeonIdentity(req);
-    if (hasBearer && !identity) return fail(res, 401, 'Your Neon Auth session is invalid. Please sign in again.');
-    if (identity) {
-      let result = await pool.query(
+    if (!identity) return fail(res, 401, 'Your Neon Auth session is invalid. Please sign in again.');
+    if (!identity.emailVerified) return fail(res, 403, 'Verify your email with Neon Auth before accessing Strap.');
+    let result = await pool.query(
+      `SELECT u.id,u.email,u.full_name,u.photo_url,u.created_at,
+              b.id AS business_id,b.name AS business_name,b.currency,b.country,b.plan
+       FROM users u LEFT JOIN businesses b ON b.owner_id=u.id AND b.is_default=true
+       WHERE u.neon_auth_user_id=$1 AND u.disabled_at IS NULL LIMIT 1`,
+      [identity.id]
+    );
+    if (!result.rowCount) {
+      result = await pool.query(
         `SELECT u.id,u.email,u.full_name,u.photo_url,u.created_at,
                 b.id AS business_id,b.name AS business_name,b.currency,b.country,b.plan
          FROM users u LEFT JOIN businesses b ON b.owner_id=u.id AND b.is_default=true
-         WHERE u.neon_auth_user_id=$1 AND u.disabled_at IS NULL LIMIT 1`,
-        [identity.id]
+         WHERE u.email=$1 AND u.neon_auth_user_id IS NULL AND u.disabled_at IS NULL LIMIT 1`,
+        [identity.email]
       );
-      if (!result.rowCount) {
-        result = await pool.query(
-          `SELECT u.id,u.email,u.full_name,u.photo_url,u.created_at,
-                  b.id AS business_id,b.name AS business_name,b.currency,b.country,b.plan
-           FROM users u LEFT JOIN businesses b ON b.owner_id=u.id AND b.is_default=true
-           WHERE u.email=$1 AND u.neon_auth_user_id IS NULL AND u.disabled_at IS NULL LIMIT 1`,
-          [identity.email]
-        );
-        if (result.rowCount) {
-          const linked = await pool.query('UPDATE users SET neon_auth_user_id=$2,updated_at=now() WHERE id=$1 AND neon_auth_user_id IS NULL RETURNING id', [result.rows[0].id, identity.id]);
-          if (!linked.rowCount) return fail(res, 409, 'This email is already linked to another authentication account.');
-        }
-      }
       if (result.rowCount) {
-        req.user = result.rows[0];
-        return next();
+        const linked = await pool.query('UPDATE users SET neon_auth_user_id=$2,updated_at=now() WHERE id=$1 AND neon_auth_user_id IS NULL RETURNING id', [result.rows[0].id, identity.id]);
+        if (!linked.rowCount) return fail(res, 409, 'This email is already linked to another authentication account.');
       }
-      return fail(res, 401, 'Your Strap profile is not linked to this Neon Auth account. Please sign in again.');
     }
-    const token = req.cookies[COOKIE_NAME];
-    if (!token) return fail(res, 401, 'Please sign in.');
-    const result = await pool.query(
-      `SELECT u.id,u.email,u.full_name,u.photo_url,u.created_at,
-              b.id AS business_id,b.name AS business_name,b.currency,b.country,b.plan
-       FROM sessions s JOIN users u ON u.id=s.user_id
-       LEFT JOIN businesses b ON b.owner_id=u.id AND b.is_default=true
-       WHERE s.token_hash=$1 AND s.expires_at > now() AND u.disabled_at IS NULL LIMIT 1`,
-      [hash(token)]
-    );
-    if (!result.rowCount) return fail(res, 401, 'Your session has expired. Please sign in again.');
+    if (!result.rowCount) return fail(res, 401, 'Your Strap profile is not linked to this Neon Auth account. Please sign in again.');
     req.user = result.rows[0];
     next();
-  } catch (e) { next(e); }
+  } catch (error) { next(error); }
 }
 async function flutterwave(pathname, payload) {
   const response = await fetch(`${FLW_BASE}${pathname}`, {
@@ -204,7 +171,7 @@ app.post('/api/auth/register', neonIdentity, asyncRoute(async (req, res) => {
       );
       user = updated.rows[0];
     } else {
-      const passwordHash = await bcrypt.hash(randomToken(), 12);
+      const passwordHash = 'NEON_AUTH_ONLY';
       const inserted = await client.query(
         'INSERT INTO users(email,password_hash,full_name,photo_url,neon_auth_user_id) VALUES($1,$2,$3,$4,$5) RETURNING id,email,full_name,photo_url,created_at',
         [email, passwordHash, name, req.body.photoUrl || null, req.neonIdentity.id]
@@ -223,8 +190,7 @@ app.post('/api/auth/register', neonIdentity, asyncRoute(async (req, res) => {
     );
     await client.query('INSERT INTO account_data(user_id,data) VALUES($1,$2::jsonb) ON CONFLICT(user_id) DO NOTHING', [user.id, JSON.stringify({})]);
     await client.query('COMMIT');
-    await createSession(user.id, res);
-    const b = await pool.query('SELECT name,currency,country FROM businesses WHERE owner_id=$1 AND is_default=true LIMIT 1', [user.id]);
+        const b = await pool.query('SELECT name,currency,country FROM businesses WHERE owner_id=$1 AND is_default=true LIMIT 1', [user.id]);
     res.status(found.rowCount ? 200 : 201).json({ ok: true, user: publicUser({ ...user, business_name: b.rows[0]?.name, currency: b.rows[0]?.currency, country: b.rows[0]?.country }) });
   } catch (error) {
     await client.query('ROLLBACK');
@@ -274,8 +240,7 @@ app.post('/api/auth/sync', neonIdentity, asyncRoute(async (req, res) => {
     const linked = await pool.query('UPDATE users SET neon_auth_user_id=$2,updated_at=now() WHERE id=$1 AND neon_auth_user_id IS NULL RETURNING id', [result.rows[0].id, req.neonIdentity.id]);
     if (!linked.rowCount) return fail(res, 409, 'This email is already linked to another authentication account.');
   }
-  await createSession(result.rows[0].id, res);
-  res.json({ ok: true, user: publicUser(result.rows[0]) });
+    res.json({ ok: true, user: publicUser(result.rows[0]) });
 }));;
 app.post('/api/storefront/subdomain/check', auth, asyncRoute(async (req, res) => {
   const name = cleanText(req.body.name, 40).toLowerCase();
@@ -301,13 +266,6 @@ app.post('/api/storefront/domain/verify', auth, asyncRoute(async (req, res) => {
   } catch { res.json({ ok: true, verified: false }); }
 }));
 app.get('/api/auth/me', auth, asyncRoute(async (req, res) => res.json({ ok: true, user: publicUser(req.user) })));
-app.post('/api/auth/logout', auth, asyncRoute(async (req, res) => {
-  const token = req.cookies[COOKIE_NAME];
-  await pool.query('DELETE FROM sessions WHERE token_hash=$1', [hash(token)]);
-  res.clearCookie(COOKIE_NAME, { path: '/', ...(ENV.SESSION_COOKIE_DOMAIN ? { domain: ENV.SESSION_COOKIE_DOMAIN } : {}) });
-  res.json({ ok: true });
-}));
-
 app.get('/api/data', auth, asyncRoute(async (req, res) => {
   const result = await pool.query('SELECT data FROM account_data WHERE user_id=$1', [req.user.id]);
   res.json({ ok: true, data: result.rows[0]?.data || {} });
