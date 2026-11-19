@@ -188,7 +188,7 @@ window.StrapStore = (() => {
     removeHeld(id) { S.held = S.held.filter(h => h.id !== id); save(); },
 
     // ----- credit book -----
-    addCredit(c) { S.credits.unshift({ id: uid('c'), createdAt: Date.now(), payments: [], ...c }); save(); api.scheduleCreditReminder(S.credits[0]); return S.credits[0]; },
+    addCredit(c) { S.credits.unshift({ id: uid('c'), createdAt: Date.now(), payments: [], ...c }); save(); return S.credits[0]; },
     payCredit(id, amount) {
       const c = S.credits.find(x => x.id === id); if (!c) return null;
       const amt = Math.min(Math.max(0, +amount || 0), credits.balance(c)); if (!amt) return c;
