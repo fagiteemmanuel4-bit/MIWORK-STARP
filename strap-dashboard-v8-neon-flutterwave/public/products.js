@@ -247,7 +247,7 @@ window.StrapProducts = (() => {
     function openSheet() { showView('main'); sheet.style.transform = ''; sheetWrap.hidden = false; document.body.classList.add('pm-open'); void sheet.offsetWidth; sheetWrap.classList.add('on'); }
     function closeSheet(keepLock) { sheetWrap.classList.remove('on'); if (!keepLock) document.body.classList.remove('pm-open'); setTimeout(() => { if (!sheetWrap.classList.contains('on')) sheetWrap.hidden = true; }, 380); }
     const openImport = openSheet;
-    const openAI = () => StrapFeatures.aiImport(list => { items = [...list, ...items]; renderAll(); StrapFeatures.setItems(items); });
+    const openAI = () => StrapFeatures.aiImport(async list => { items = [...list, ...items]; await StrapFeatures.setItems(items); renderAll(); });
     sheetWrap.addEventListener('click', e => {
       if (e.target.closest('.pm-scrim') || e.target.closest('[data-close]')) return closeSheet();
       if (e.target.closest('[data-back]')) return showView('main');
@@ -304,17 +304,32 @@ window.StrapProducts = (() => {
       A.sample = () => download(new Blob(['Title,Price,Quantity,Status,SKU\r\nCanvas Pencil Case,2500,24,active,CPC-01\r\nFoam Exercise Mat,14000,9,draft,FEM-02\r\n'], { type: 'text/csv' }), 'strap-sample.csv');
     }
     async function csvRun(file) {
-      if (!file) return; const my = tok, ext = (file.name.split('.').pop() || '').toLowerCase(); let res = { ok: [], skipped: 0 }, err = null;
-      if (ext === 'xls' || ext === 'xlsx') err = ['Spreadsheet files aren’t supported yet', 'Save your file as .csv (Save as → CSV) and upload it again.'];
-      else { try { res = csvToProducts(await file.text()); } catch (e) { err = ['We couldn’t read that file', 'Make sure it’s a plain CSV or text file and try again.']; } if (!err && !res.ok.length) err = ['No products found', 'We couldn’t find a Title column, or every row was empty. Check the sample file for the format.']; }
-      if (err) { fSet(errScreen(err[0], err[1], 'Try another file')); A.retry = csvPicker; return; }
-      fSet(progScreen('Importing your products', file.name, ['Reading your file', 'Checking columns', 'Matching products', 'Adding to your store']));
-      const total = res.ok.length, saved = api.importCsv(res.ok);
-      if (!(await run(my, total, Math.min(6500, 2400 + total * 30)))) return;
+      if (!file) return;
+      const my = tok, ext = (file.name.split('.').pop() || '').toLowerCase();
+      let res = { ok: [], skipped: 0 };
       try {
-        const list = await saved; items = [...list, ...items]; renderAll();
-        fSet(doneScreen(`${list.length} product${list.length === 1 ? '' : 's'} imported`, res.skipped ? 'Some rows had no title, so we skipped them.' : 'They’re in your catalogue now. Tap any product to edit it.', [[list.length, 'Imported'], [res.skipped, 'Skipped']], 'View products')); A.done = fClose;
-      } catch (e) { fSet(errScreen('Import failed', 'Something went wrong while saving your products.', 'Try again')); A.retry = csvPicker; }
+        if (file.size > 5 * 1024 * 1024) throw new Error('This file is larger than 5 MB. Split it into smaller CSV files and try again.');
+        if (ext === 'xls' || ext === 'xlsx') throw new Error('Excel workbooks are not supported yet. Export the sheet as CSV and upload it again.');
+        const text = await Promise.race([
+          file.text(),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Reading this file took too long. Try saving it as a standard CSV.')), 15000))
+        ]);
+        res = csvToProducts(text);
+        if (!res.ok.length) throw new Error('We couldn’t find any products. Check that the first row contains a Title or Product Name column.');
+        fSet(progScreen('Importing your products', file.name, ['Reading your file', 'Checking columns', 'Matching products', 'Adding to your store']));
+        const total = res.ok.length;
+        if (!(await run(my, total, Math.min(5000, 1800 + total * 20)))) return;
+        const list = await api.importCsv(res.ok);
+        if (my !== tok) return;
+        items = [...list, ...items];
+        renderAll();
+        fSet(doneScreen(`${list.length} product${list.length === 1 ? '' : 's'} imported`, res.skipped ? 'Some rows had no title, so we skipped them.' : 'Your products are saved to your Strap workspace. You can now edit them or start selling.', [[list.length, 'Imported'], [res.skipped, 'Skipped']], 'View products'));
+        A.done = fClose;
+      } catch (error) {
+        if (my !== tok) return;
+        fSet(errScreen('Import failed', error.message || 'We couldn’t save your products. Check your connection and try again.', 'Try another file'));
+        A.retry = csvPicker;
+      }
     }
 
     // ----- website import -----
