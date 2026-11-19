@@ -1,4 +1,10 @@
 (() => {
+  window.addEventListener('strap:persistence-error', event => {
+    const message = event.detail?.message || 'Some changes could not be saved. Check your connection and try again.';
+    const toastEl = document.getElementById('toast');
+    if (toastEl) { toastEl.textContent = message; toastEl.classList.add('on'); clearTimeout(window.__strapPersistToast); window.__strapPersistToast = setTimeout(() => toastEl.classList.remove('on'), 4200); }
+    console.error('Strap persistence error:', event.detail);
+  });
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
   const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -25,7 +31,8 @@
         try { await window.StrapAPI.refresh(); }
         catch (error) { console.warn('Strap dashboard session restore retry failed:', error); }
       }
-      if (!window.StrapAPI.user) { location.replace('index.html'); return null; }
+      if (!window.StrapAPI.user) { location.replace('/'); return null; }
+      if (window.StrapAPI.user.profileComplete === false) { location.replace('/?complete=1'); return null; }
       await Promise.all([StrapStore.hydrate(), StrapFeatures.hydrate()]);
       D = window.StrapAPI.user;
       const params = new URLSearchParams(location.search);
