@@ -406,12 +406,12 @@ window.StrapProducts = (() => {
           <p class="pm-lb">Media</p>
           <div class="pm-drop">
             <div class="pm-thumbs" hidden></div>
-            <div class="pm-dacts"><button type="button" class="pm-pill" data-upload>Preview a file</button><button type="button" class="pm-ghost" data-existing>Select existing</button></div>
-            <small>Local files are preview-only on this account. To save and publish an image, add a permanent HTTPS image URL below.</small>
-            <input type="file" accept="image/*,video/*,.glb,.gltf" multiple hidden data-file>
+            <div class="pm-dacts"><button type="button" class="pm-pill" data-upload>Upload images</button><button type="button" class="pm-ghost" data-existing>Select existing</button></div>
+            <small>Upload JPG, PNG, WebP, AVIF or GIF images. Each image can be up to 8 MB and is stored securely for your products.</small>
+            <input type="file" accept="image/jpeg,image/png,image/webp,image/avif,image/gif" multiple hidden data-file>
           </div>
-          <label class="pm-fl" style="margin-top:12px"><span>Public image URL</span><input name="imageUrl" type="url" inputmode="url" placeholder="https://images.example.com/product.jpg" autocomplete="url"></label>
-          <p class="pm-hint">Use a publicly accessible HTTPS image URL. Cloud image uploads are not enabled on this preview account yet.</p>
+          <label class="pm-fl" style="margin-top:12px"><span>Public image URL (optional)</span><input name="imageUrl" type="url" inputmode="url" placeholder="https://images.example.com/product.jpg" autocomplete="url"></label>
+          <p class="pm-hint">You can upload images directly or use a publicly accessible HTTPS image URL.</p>
           <p class="pm-lb">Category</p>
           <label class="pm-fl sel"><select name="category"><option value="">Choose a product category</option>${CATEGORIES.map(c => `<option>${c}</option>`).join('')}</select>${ic('chevUD', 18, 2)}</label>
           <p class="pm-hint">Helps organise your catalogue and makes search and filters work better.</p>
@@ -512,7 +512,7 @@ window.StrapProducts = (() => {
     function openPage(p) { resetForm(); editing = p || null; if (p) fillForm(p); $('#pm-ptitle', page).textContent = p ? 'Edit product' : 'Add product'; $('[data-save]', page).textContent = p ? 'Save changes' : 'Save product'; const dl = $('[data-del]', page); dl.hidden = !p; dl.classList.remove('arm'); page.hidden = false; document.body.classList.add('pm-open'); page.scrollTop = 0; void page.offsetWidth; page.classList.add('on'); }
     function closePage() { page.classList.remove('on'); document.body.classList.remove('pm-open'); setTimeout(() => { if (!page.classList.contains('on')) page.hidden = true; }, 360); }
     function resetForm() {
-      form.reset(); $('.pm-ed', page).innerHTML = ''; files = []; renderThumbs();
+      form.reset(); $('.pm-ed', page).innerHTML = ''; files.forEach(f => { if (f.file && /^blob:/i.test(f.url || '')) URL.revokeObjectURL(f.url); }); files = []; renderThumbs();
       $$('.rv', page).forEach(x => x.hidden = true); $$('.pm-chip.on', page).forEach(c => c.classList.remove('on'));
       $$('[data-toggle]', page).forEach(c => { const e = $('em', c); const init = c.dataset.toggle === 'tax'; c.dataset.state = init ? '1' : '0'; e.textContent = init ? c.dataset.on : c.dataset.off; e.classList.toggle('on', init); });
       $$('.pm-sw', page).forEach(s => { s.classList.add('on'); s.setAttribute('aria-checked', 'true'); });
@@ -538,8 +538,22 @@ window.StrapProducts = (() => {
     }
     $('[data-upload]', page).addEventListener('click', () => fileIn.click());
     $('[data-existing]', page).addEventListener('click', () => toast('Your media library is empty'));
-    fileIn.addEventListener('change', e => { [...e.target.files].forEach(f => files.push({ name: f.name, type: f.type || '', url: URL.createObjectURL(f), file: f })); renderThumbs(); fileIn.value = ''; });
-    thumbs.addEventListener('click', e => { const r = e.target.closest('[data-rm]'); if (r) { files.splice(+r.dataset.rm, 1); renderThumbs(); } });
+    fileIn.addEventListener('change', e => {
+      const allowed = new Set(['image/jpeg','image/png','image/webp','image/avif','image/gif']);
+      [...e.target.files].forEach(f => {
+        if (!allowed.has(String(f.type || '').toLowerCase())) { toast('Choose a JPG, PNG, WebP, AVIF or GIF image.'); return; }
+        if (f.size < 1 || f.size > 8 * 1024 * 1024) { toast('Each product image must be 8 MB or smaller.'); return; }
+        files.push({ name: f.name, type: f.type, url: URL.createObjectURL(f), file: f });
+      });
+      renderThumbs(); fileIn.value = '';
+    });
+    thumbs.addEventListener('click', e => {
+      const r = e.target.closest('[data-rm]');
+      if (!r) return;
+      const removed = files.splice(+r.dataset.rm, 1)[0];
+      if (removed?.file && /^blob:/i.test(removed.url || '')) URL.revokeObjectURL(removed.url);
+      renderThumbs();
+    });
     // chips, switches, stepper
     page.addEventListener('click', e => {
       const c = e.target.closest('.pm-chip');
@@ -634,9 +648,8 @@ window.StrapProducts = (() => {
       const g = n => form[n] ? form[n].value : '';
       const imageUrl = g('imageUrl').trim();
       if (imageUrl && !/^https:\/\/[^\s"'<>]+$/i.test(imageUrl)) return toast('Use a publicly accessible HTTPS image URL.');
-      const localOnlyFiles = files.filter(f => f.file || /^blob:/i.test(f.url || ''));
-      if (localOnlyFiles.length && !imageUrl) return toast('This preview has no cloud media storage yet. Add a permanent HTTPS image URL or remove the local file before saving.');
-      const publicFiles = files.filter(f => /^https?:\/\//i.test(f.url || '')).map(({ name, type, url }) => ({ name, type, url }));
+      const localFiles = files.filter(f => f.file);
+      const publicFiles = files.filter(f => !f.file && /^https?:\/\//i.test(f.url || '')).map(({ name, type, url }) => ({ name, type, url }));
       if (imageUrl && !publicFiles.some(f => f.url === imageUrl)) publicFiles.unshift({ name: 'Product image', type: 'image/url', url: imageUrl });
       const product = {
         id: editing ? editing.id : undefined,
@@ -651,12 +664,35 @@ window.StrapProducts = (() => {
         collections: $$('[data-tags=collections] .pm-tag > span', page).map(x => x.textContent), tags: $$('[data-tags=tags] .pm-tag > span', page).map(x => x.textContent)
       };
       const btn = $('[data-save]', page), idle = editing ? 'Save changes' : 'Save product'; btn.disabled = true; btn.textContent = 'Saving…';
+      const uploadedFiles = [];
       try {
-        const saved = await api.saveProduct({ ...product, media: files.map(f => f.file).filter(Boolean) });
+        for (const entry of localFiles) {
+          const file = entry.file;
+          const signed = await StrapAPI.request('/api/media/presign', {
+            method: 'POST',
+            body: JSON.stringify({ contentType: file.type, size: file.size })
+          });
+          const upload = await fetch(signed.uploadUrl, {
+            method: signed.method || 'PUT',
+            headers: signed.headers || { 'Content-Type': file.type },
+            body: file
+          });
+          if (!upload.ok) throw new Error('Could not upload "' + file.name + '". Please retry the image upload.');
+          uploadedFiles.push({ name: file.name, type: file.type, url: signed.publicUrl, key: signed.key });
+        }
+        const allFiles = [...publicFiles, ...uploadedFiles.map(({ name, type, url }) => ({ name, type, url }))];
+        product.files = allFiles;
+        if (!imageUrl) product.image = (allFiles.find(f => f.type.startsWith('image')) || {}).url || '';
+        const saved = await api.saveProduct(product);
         const rec = { ...product, id: saved.id };
         if (editing) { const i = items.findIndex(x => x.id === editing.id); if (i > -1) items[i] = rec; } else items.unshift(rec);
         renderAll(); closePage(); toast(editing ? 'Changes saved' : 'Product added');
-      } catch (err) { toast(err.message || 'Could not save. Check your connection and try again.'); }
+      } catch (err) {
+        await Promise.all(uploadedFiles.map(f => StrapAPI.request('/api/media/object', {
+          method: 'DELETE', body: JSON.stringify({ key: f.key })
+        }).catch(() => null)));
+        toast(err.message || 'Could not save. Check your connection and try again.');
+      }
       btn.disabled = false; btn.textContent = idle;
     }
 
