@@ -345,13 +345,23 @@ window.StrapProducts = (() => {
     }
     async function siteRun(s, addr) {
       const my = tok;
-      fSet(progScreen(`Importing from ${s[0]}`, esc(addr), [`Connecting to ${s[0]}`, 'Finding your products', 'Copying photos and prices', 'Adding to your store']));
-      let list = []; const call = api.importFromSite(s[0].toLowerCase(), addr).then(r => list = r).catch(() => null);
-      const rp = run(my, 0, 5200);
-      const [ok] = await Promise.all([rp, call]); if (!ok) return;
-      if (!list.length) { fSet(errScreen('No products found', `We connected to ${s[0]} but couldn’t find any products to import.`, 'Try another address')); A.retry = () => siteConnect(s); return; }
-      items = [...list, ...items]; renderAll();
-      fSet(doneScreen(`${list.length} products imported`, `Your ${s[0]} catalogue is now in Strap.`, [[list.length, 'Imported'], [0, 'Skipped']], 'View products')); A.done = fClose;
+      fSet(progScreen(`Connecting to ${s[0]}`, esc(addr), ['Checking connection', 'Checking import support']));
+      try {
+        const result = await api.importFromSite(s[0].toLowerCase(), addr);
+        if (my !== tok) return;
+        if (result && result.ok === false) throw new Error(result.msg || 'This marketplace connector is not available yet.');
+        if (!Array.isArray(result) || !result.length) throw new Error('No importable products were returned by this marketplace.');
+        const list = result;
+        items = [...list, ...items];
+        await StrapFeatures.setItems(items);
+        renderAll();
+        fSet(doneScreen(`${list.length} products imported`, `Your ${s[0]} catalogue is now saved in Strap.`, [[list.length, 'Imported'], [0, 'Skipped']], 'View products'));
+        A.done = fClose;
+      } catch (error) {
+        if (my !== tok) return;
+        fSet(errScreen('Marketplace import unavailable', error.message || 'This external marketplace connector is not active yet. You can import your catalogue using CSV instead.', 'Try another method'));
+        A.retry = csvPicker;
+      }
     }
 
     // ----- export -----
