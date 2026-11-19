@@ -171,7 +171,9 @@ async function neonIdentity(req, res, next) {
 }
 async function auth(req, res, next) {
   try {
+    const hasBearer = /^Bearer\s+\S+/i.test(String(req.headers.authorization || ''));
     const identity = await getNeonIdentity(req);
+    if (hasBearer && !identity) return fail(res, 401, 'Your Neon Auth session is invalid. Please sign in again.');
     if (identity) {
       let result = await pool.query(
         `SELECT u.id,u.email,u.full_name,u.photo_url,u.created_at,
@@ -197,6 +199,7 @@ async function auth(req, res, next) {
         req.user = result.rows[0];
         return next();
       }
+      return fail(res, 401, 'Your Strap profile is not linked to this Neon Auth account. Please sign in again.');
     }
     const token = req.cookies[COOKIE_NAME];
     if (!token) return fail(res, 401, 'Please sign in.');
