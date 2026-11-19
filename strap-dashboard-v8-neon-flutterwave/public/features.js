@@ -28,6 +28,10 @@ window.StrapFeatures = (() => {
     S.reports = Array.isArray(S.reports) ? S.reports : [];
     S.dismissed = Array.isArray(S.dismissed) ? S.dismissed : [];
     S.staff = Array.isArray(S.staff) ? S.staff : [];
+    S.transfers = Array.isArray(S.transfers) ? S.transfers : [];
+    S.mcp = Array.isArray(S.mcp) ? S.mcp : [];
+    S.seeded = Boolean(S.seeded);
+    S.pushAsked = Boolean(S.pushAsked);
     S.branches = Array.isArray(S.branches) && S.branches.length ? S.branches : defaults().branches;
     if (!S.branches.some(b => b.id === S.active)) S.active = S.branches[0].id;
     S.itemsByBranch = S.itemsByBranch && typeof S.itemsByBranch === 'object' && !Array.isArray(S.itemsByBranch) ? S.itemsByBranch : {};
