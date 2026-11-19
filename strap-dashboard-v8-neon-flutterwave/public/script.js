@@ -17,24 +17,37 @@
     async sendCode(email, purpose = 'verify') {
       try {
         const client = window.StrapNeonAuth.client;
-        if (purpose === 'signup' && !D.neonSignupStarted) {
-          const { error } = await client.signUp.email({ email, password: D.password, name: email.split('@')[0] });
+        const normalizedEmail = String(email || '').trim().toLowerCase();
+        if (!normalizedEmail) throw new Error('Enter your email address before requesting a code.');
+        if (purpose === 'signup' && D.neonSignupEmail !== normalizedEmail) {
+          const { error } = await client.signUp.email({
+            email: normalizedEmail,
+            password: D.password,
+            name: normalizedEmail.split('@')[0]
+          });
           if (error) throw error;
-          D.neonSignupStarted = true;
-        } else if (purpose === 'signup') {
-          const { error } = await client.emailOtp.sendVerificationOtp({ email, type: 'email-verification' });
+          // Neon Auth automatically sends the verification OTP when Verify at Sign-up
+          // is enabled. Do not send a second code for the initial signup request.
+          D.neonSignupEmail = normalizedEmail;
+        } else if (purpose === 'signup' || purpose === 'verify') {
+          const { error } = await client.emailOtp.sendVerificationOtp({
+            email: normalizedEmail,
+            type: 'email-verification'
+          });
           if (error) throw error;
         } else if (purpose === 'reset') {
-          const { error } = await client.forgetPassword.emailOtp({ email });
+          const { error } = await client.forgetPassword.emailOtp({ email: normalizedEmail });
           if (error) throw error;
         } else {
-          const { error } = await client.emailOtp.sendVerificationOtp({ email, type: 'email-verification' });
-          if (error) throw error;
+          throw new Error('Unsupported verification request.');
         }
         return { ok: true };
-      } catch (e) { return { ok: false, msg: e.message || 'Could not send the verification code.' }; }
+      } catch (e) {
+        const message = e?.message || e?.error?.message || 'Could not send the verification code.';
+        return { ok: false, msg: message };
+      }
     },
-    async verifyCode(email, code, purpose = 'reset') {
+    async verifyCode(email, code, purpose = 'verify') {
       try {
         if (purpose === 'reset') {
           const { data, error } = await window.StrapNeonAuth.client.emailOtp.checkVerificationOtp({ email, otp: code, type: 'forget-password' });
@@ -135,7 +148,7 @@
     lok: { k: 'success', noBack: 1, t: 'You’re signed in', s: 'Welcome back to Strap.', label: 'Open dashboard', auto: 2200, go: () => { location.href = 'dashboard.html'; } },
     fgemail: { t: 'Reset your password', s: 'Enter your account email and we’ll send you a 6 digit code.', f: [{ key: 'fgemail', type: 'email', ph: 'example@email.com', ac: 'email', def: () => D.lemail, v: emailError }], btn: 'Send code',
       act: () => api.sendCode(D.fgemail, 'reset'), next: 'fgcode' },
-    fgcode: { k: 'code', purpose: 'reset', len: 6, wait: 30, mail: 'fgemail', save: 'fgcode', verify: (m, c) => api.verifyCode(m, c), t: 'Enter the code', s: () => `We sent a 6 digit code to ${D.fgemail}.`, next: 'fgnew' },
+    fgcode: { k: 'code', purpose: 'reset', len: 6, wait: 30, mail: 'fgemail', save: 'fgcode', verify: (m, c) => api.verifyCode(m, c, 'reset'), t: 'Enter the code', s: () => `We sent a 6 digit code to ${D.fgemail}.`, next: 'fgnew' },
     fgnew: { t: 'Create a new password', s: 'Use at least 10 characters with a letter and a number.', f: [
       { key: 'fgpw', type: 'password', ph: 'New password', ac: 'new-password', meter: 1, v: pwErr },
       { key: 'fgpw2', type: 'password', ph: 'Confirm password', ac: 'new-password', v: v => v === D.fgpw ? '' : 'Passwords don’t match.' }], btn: 'Update password',
@@ -301,13 +314,41 @@
     const tl = el('div', 'tl'), note = el('span'), rs = el('button', '', 'Resend'); rs.type = 'button';
     tl.append(note, rs); g.append(i, err); body.append(g, tl);
     const btn = pill('Verify'); btn.type = 'submit'; btn.disabled = true; foot.append(btn);
-    const start = () => {
-      let s = st.wait || 180; rs.disabled = true; clearInterval(tmr);
-      const tick = () => { note.textContent = s > 0 ? `Try again in ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}s` : 'Didn’t get the code?'; if (s-- <= 0) { clearInterval(tmr); rs.disabled = false; } };
-      tick(); tmr = setInterval(tick, 1000);
+    const start = (seconds = (st.wait || 30)) => {
+      let remaining = seconds;
+      rs.disabled = true;
+      clearInterval(tmr);
+      const tick = () => {
+        note.textContent = remaining > 0
+          ? `Try again in ${Math.floor(remaining / 60)}:${String(remaining % 60).padStart(2, '0')}s`
+          : 'Didn’t get the code?';
+        if (remaining-- <= 0) {
+          clearInterval(tmr);
+          rs.disabled = false;
+        }
+      };
+      tick();
+      tmr = setInterval(tick, 1000);
     };
     start();
-    rs.onclick = async () => { await api.sendCode(mail(), st.purpose || 'verify'); i.value = ''; btn.disabled = true; err.textContent = ''; start(); toast('New code sent'); };
+    rs.onclick = async () => {
+      if (rs.disabled) return;
+      rs.disabled = true;
+      rs.textContent = 'Sending…';
+      err.textContent = '';
+      const result = await api.sendCode(mail(), st.purpose || 'verify');
+      rs.textContent = 'Resend';
+      if (!result.ok) {
+        err.textContent = result.msg || 'We couldn’t send another code. Please try again.';
+        // Keep the existing code in the field: a failed resend does not invalidate it.
+        start(30);
+        return;
+      }
+      i.value = '';
+      btn.disabled = true;
+      start(30);
+      toast('A new verification code was requested. Check your inbox and spam folder.');
+    };
     i.addEventListener('input', () => { i.value = i.value.replace(/\D/g, '').slice(0, N); err.textContent = ''; btn.disabled = i.value.length < N; if (i.value.length === N) btn.click(); });
     btn.onclick = async () => {
       if (btn.disabled) return; lock(btn, true, 'Verifying…');
