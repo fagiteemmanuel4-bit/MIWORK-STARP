@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { httpServerHandler } from "cloudflare:node";
+import { handleAsNodeRequest } from "cloudflare:node";
 
 let appHandlerPromise;
 
@@ -14,7 +14,7 @@ async function getAppHandler(env) {
     appHandlerPromise = import("../server.mjs").then(({ default: app }) => {
       const server = createServer(app);
       server.listen(8787);
-      return httpServerHandler(server);
+      return true;
     }).catch(error => {
       appHandlerPromise = null;
       throw error;
@@ -84,8 +84,8 @@ export default {
           status: 429, headers: { "Retry-After": "60" }
         });
       }
-      const handler = await getAppHandler(env);
-      return handler(request);
+      await getAppHandler(env);
+      return handleAsNodeRequest(8787, request);
     } catch (error) {
       console.error("Strap Worker request failed:", error);
       return Response.json({ ok: false, message: env.STRAP_DEBUG === "true" ? String(error?.stack || error?.message || error) : "Strap is temporarily unavailable. Please try again." }, { status: 503 });
