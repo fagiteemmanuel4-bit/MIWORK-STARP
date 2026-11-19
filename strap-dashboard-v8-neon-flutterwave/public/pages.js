@@ -139,7 +139,7 @@ window.StrapPages = (() => {
           ${p.tracked ? `<div class="pm-step"><button type="button" data-q="-1" aria-label="Decrease">−</button><span class="pg-q">${p.qty}</span><button type="button" data-q="1" aria-label="Increase">+</button></div>` : ''}</li>`).join('')}</ul>`
         : empty('inventory', 'No inventory yet', 'Products you add will show up here so you can keep an eye on your stock.', `<button type="button" class="pm-add" data-addp>${ic('plus', 20, 2.2)} Add product</button>`));
     }
-    root.addEventListener('click', e => {
+    root.addEventListener('click', async e => {
       if (e.target.closest('[data-addp]')) { ctx.go('products'); setTimeout(() => P.openAdd(), 300); return; }
       const b = e.target.closest('[data-q]'); if (!b) return;
       const id = b.closest('.pg-row').dataset.id, p = P.items().find(x => x.id === id); if (!p) return;
