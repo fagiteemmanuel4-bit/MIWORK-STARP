@@ -531,7 +531,7 @@ window.StrapFeatures = (() => {
     const P = StrapProducts.api, cap = n => { if (items().length + n > lim().products) { gate(`The free plan holds ${LIM.free.products} products. Upgrade for more.`); throw new Error('limit'); } };
     P.getProducts = async () => { await sleep(350); return items(); };
     const sv = P.saveProduct, dl = P.deleteProduct, ic1 = P.importCsv, is1 = P.importFromSite;
-    P.saveProduct = async p => { const l = items(); const isNew = !p.id || !l.some(x => x.id === p.id); if (isNew) cap(1); const r = await sv(p); const i = l.findIndex(x => x.id === r.id); i < 0 ? l.unshift(r) : (l[i] = r); await setItems(l); return r; };
+    P.saveProduct = async p => { const l = items().slice(); const isNew = !p.id || !l.some(x => x.id === p.id); if (isNew) cap(1); const r = await sv(p); const i = l.findIndex(x => x.id === r.id); i < 0 ? l.unshift(r) : (l[i] = r); await setItems(l); return r; };
     P.deleteProduct = async id => { const r = await dl(id); await setItems(items().filter(x => x.id !== id)); return r; };
     const imp = fn => async (...a) => { if (!useImport()) throw new Error('Import limit reached.'); const r = await fn(...a); cap(r.length); await setItems([...r, ...items()]); return r; };
     P.importCsv = imp(ic1); P.importFromSite = imp(is1);
