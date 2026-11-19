@@ -34,7 +34,7 @@
         if (txRef && transactionId) {
           try { await window.StrapAPI.request('/api/payments/verify', { method: 'POST', body: JSON.stringify({ txRef, transactionId }) }); }
           catch (e) { console.error('Payment verification:', e); }
-          history.replaceState({}, '', 'dashboard.html');
+          history.replaceState({}, '', '/dashboard');
         }
       }
       return StrapFeatures.stats();
