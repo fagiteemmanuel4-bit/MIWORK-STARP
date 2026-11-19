@@ -582,6 +582,7 @@ app.get('/store/:slug', asyncRoute(async (req,res) => {
   if (!store) return res.status(404).type('text/html').send('<!doctype html><title>Store not found</title><h1>Store not found</h1>');
   res.set('Cache-Control','public, max-age=60, stale-while-revalidate=300').type('html').send(renderPublicStorePage(slug,store.config,store.products,null));
 }));
+app.use('/store', (_req, res) => res.status(404).type('text/html').send('<!doctype html><title>Store page not found</title><h1>Store page not found</h1>'));
 
 app.post('/api/payments/initialize', auth, (_req, res) => fail(res, 503, 'Payments are coming soon. You can use Strap’s free workspace in the meantime.'));
 app.post('/api/payments/verify', auth, asyncRoute(async (req, res) => {
