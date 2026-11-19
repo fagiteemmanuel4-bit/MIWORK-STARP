@@ -61,10 +61,10 @@ jobs:
           echo "Checking dashboard HTML route (including Cloudflare's clean-URL redirect)"
           dashboard_result="$(curl --fail --show-error --silent --output /tmp/strap-dashboard.html --write-out "%{http_code} %{url_effective}" "$PREVIEW_URL/dashboard")"
           echo "Dashboard response: $dashboard_result"
-          grep -q "dashboard.js?v=20261119-dashboard-fix" /tmp/strap-dashboard.html
-          grep -q "features.js?v=20261119-dashboard-fix" /tmp/strap-dashboard.html
+          grep -q 'src="/dashboard.js"' /tmp/strap-dashboard.html
+          grep -q 'src="/features.js"' /tmp/strap-dashboard.html
           echo "Checking dashboard feature asset"
-          curl --fail --show-error --silent "$PREVIEW_URL/features.js?v=20261119-dashboard-fix" -o /tmp/strap-features.js
+          curl --fail --show-error --silent "$PREVIEW_URL/features.js" -o /tmp/strap-features.js
           grep -q "S.notifs = Array.isArray" /tmp/strap-features.js
           curl --fail --show-error --silent "$PREVIEW_URL/store-runtime.js" | grep -q "STRAP_PUBLIC_CONTEXT"
           curl --fail --show-error --silent "$PREVIEW_URL/robots.txt" | grep -q "Sitemap:"
