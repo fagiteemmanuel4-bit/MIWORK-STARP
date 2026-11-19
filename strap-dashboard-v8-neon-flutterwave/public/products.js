@@ -670,12 +670,12 @@ window.StrapProducts = (() => {
       items: () => items, openAdd: () => openPage(), openImport, openAI,
       countIn: name => items.filter(p => (p.collections || []).includes(name)).length,
       inCollection: name => items.filter(p => (p.collections || []).includes(name)).map(p => p.id),
-      async setCollection(name, ids) {
+      async setCollection(name, ids, persist = true) {
         const want = new Set(ids);
         const next = items.map(p => { const current = p.collections || [], has = current.includes(name), on = want.has(p.id); return { ...p, collections: on && !has ? [...current, name] : !on && has ? current.filter(x => x !== name) : current }; });
-        await StrapFeatures.setItems(next); items = StrapFeatures.items(); renderAll();
+        await StrapFeatures.setItems(next, undefined, persist); items = StrapFeatures.items(); renderAll();
       },
-      async dropCollection(name) { const next = items.map(p => ({ ...p, collections: (p.collections || []).filter(x => x !== name) })); await StrapFeatures.setItems(next); items = StrapFeatures.items(); renderAll(); },
+      async dropCollection(name, persist = true) { const next = items.map(p => ({ ...p, collections: (p.collections || []).filter(x => x !== name) })); await StrapFeatures.setItems(next, undefined, persist); items = StrapFeatures.items(); renderAll(); },
       async setQty(id, qty, persist = true) { const current = items.find(x => x.id === id); if (!current) return null; const next = items.map(p => p.id === id ? { ...p, qty: Math.max(0, qty) } : p); await StrapFeatures.setItems(next, undefined, persist); items = StrapFeatures.items(); renderBody(); return items.find(x => x.id === id); },
       onChange(fn) { subs.push(fn); }
     };
