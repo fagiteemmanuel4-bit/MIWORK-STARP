@@ -334,14 +334,11 @@ window.StrapProducts = (() => {
 
     // ----- website import -----
     function siteConnect(s) {
-      let addr = '';
-      fOpen(`${top()}<div class="fl-body"><div class="fl-hero sm">${fav(s, 84)}</div><h1>Import from ${s[0]}</h1><p class="fl-sub">Enter your ${s[0]} store address and we’ll bring your catalogue across.</p>
-        <label class="pm-fl"><span>Store address</span><input data-addr type="text" inputmode="url" autocapitalize="none" autocomplete="off" placeholder="${s[3]}"></label>
-        <p class="fl-note">${ic('lock', 16, 2)}<span>We only read your product catalogue. Nothing on ${s[0]} is changed.</span></p>
-        <button type="button" class="pm-add fl-cta" data-a="go" disabled>Connect store</button></div>`);
-      const go = $('[data-a=go]', flow);
-      A.addr = v => { addr = v.trim(); go.disabled = addr.length < 3; };
-      A.go = () => siteRun(s, addr);
+      fOpen(`${top()}<div class="fl-body"><div class="fl-hero sm">${fav(s, 84)}</div><h1>${s[0]} import</h1>
+        <p class="fl-sub">The direct ${s[0]} connector is not enabled in this Strap build yet. Your existing catalogue is safe.</p>
+        <div class="fl-note">${ic('lock', 16, 2)}<span>Use the CSV importer now. Export your products from ${s[0]} as CSV, then upload that file into Strap.</span></div>
+        <button type="button" class="pm-add fl-cta" data-a="csvnow">Import a CSV instead</button><button type="button" class="pm-ghost fl-cta2" data-fclose>Cancel</button></div>`);
+      A.csvnow = () => { fClose(); setTimeout(csvPicker, 380); };
     }
     async function siteRun(s, addr) {
       const my = tok;
