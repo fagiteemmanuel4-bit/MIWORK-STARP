@@ -6,7 +6,6 @@ import pg from 'pg';
 import bcrypt from 'bcryptjs';
 import crypto from 'node:crypto';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
-import nodemailer from 'nodemailer';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -21,7 +20,7 @@ const pool = new Pool({
   idleTimeoutMillis: 30_000,
   connectionTimeoutMillis: 10_000
 });
-const required = ['DATABASE_URL', 'APP_URL', 'SESSION_SECRET'];
+const required = ['DATABASE_URL', 'APP_URL'];
 for (const key of required) if (!ENV[key] || ENV[key].includes('replace_me')) {
   console.warn(`[config] ${key} is not configured; related requests will fail until .env is completed.`);
 }
@@ -30,10 +29,6 @@ const APP_URL = (ENV.APP_URL || `http://localhost:${PORT}`).replace(/\/$/, '');
 const COOKIE_NAME = ENV.SESSION_COOKIE_NAME || 'strap_session';
 const SESSION_DAYS = Number(ENV.SESSION_DAYS || 14);
 const CURRENCY = ENV.DEFAULT_CURRENCY || 'NGN';
-const CODE_TTL_MIN = Number(ENV.EMAIL_CODE_TTL_MINUTES || 10);
-const emailDeliveryConfigured = Boolean(ENV.RESEND_API_KEY || ENV.SMTP_HOST);
-const CODE_PEPPER = ENV.CODE_PEPPER || ENV.SESSION_SECRET || 'change-this';
-const SESSION_SECRET = ENV.SESSION_SECRET || 'development-only-change-this';
 const FLW_SECRET = ENV.FLW_SECRET_KEY || '';
 const FLW_BASE = 'https://api.flutterwave.com/v3';
 const NEON_AUTH_BASE_URL_RAW = ENV.NEON_AUTH_BASE_URL || '';
@@ -76,67 +71,10 @@ app.use('/api/auth', rateLimit({ windowMs: 15 * 60_000, limit: 60, standardHeade
 const hash = value => crypto.createHash('sha256').update(String(value)).digest('hex');
 const randomToken = () => crypto.randomBytes(32).toString('base64url');
 const emailNorm = value => String(value || '').trim().toLowerCase();
-const safeEqual = (a, b) => {
-  const aa = Buffer.from(String(a)), bb = Buffer.from(String(b));
-  return aa.length === bb.length && crypto.timingSafeEqual(aa, bb);
-};
 const cleanText = (v, max = 160) => String(v ?? '').trim().slice(0, max);
 const fail = (res, status, message) => res.status(status).json({ ok: false, message });
 const asyncRoute = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
-let mailer;
-function getMailer() {
-  if (mailer) return mailer;
-  if (ENV.RESEND_API_KEY) return null;
-  if (ENV.SMTP_HOST) {
-    mailer = nodemailer.createTransport({
-      host: ENV.SMTP_HOST,
-      port: Number(ENV.SMTP_PORT || 587),
-      secure: String(ENV.SMTP_SECURE || 'false') === 'true',
-      auth: ENV.SMTP_USER ? { user: ENV.SMTP_USER, pass: ENV.SMTP_PASS } : undefined
-    });
-    return mailer;
-  }
-  return null;
-}
-async function sendEmail(to, subject, html, textBody) {
-  const from = ENV.EMAIL_FROM || 'Strap <no-reply@example.com>';
-  if (ENV.RESEND_API_KEY) {
-    const response = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${ENV.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ from, to: [to], subject, html, text: textBody })
-    });
-    if (!response.ok) throw new Error(`Email provider rejected the message (${response.status}).`);
-    return;
-  }
-  const transport = getMailer();
-  if (!transport) throw new Error('Email is not configured. Add RESEND_API_KEY or SMTP settings to .env.');
-  await transport.sendMail({ from, to, subject, html, text: textBody });
-}
-async function issueCode(email, purpose, length = 6) {
-  const code = crypto.randomInt(0, 10 ** length).toString().padStart(length, '0');
-  await pool.query(
-    `INSERT INTO email_verifications(email, purpose, code_hash, expires_at)
-     VALUES ($1,$2,$3,now() + ($4::text || ' minutes')::interval)`,
-    [email, purpose, hash(`${CODE_PEPPER}:${email}:${purpose}:${code}`), String(CODE_TTL_MIN)]
-  );
-  await sendEmail(email, purpose === 'signup' ? 'Verify your Strap account' : 'Your Strap security code',
-    `<div style="font-family:Arial,sans-serif;max-width:520px;margin:auto;color:#111"><h2>Strap verification</h2><p>Use this code to continue. It expires in ${CODE_TTL_MIN} minutes.</p><p style="font-size:30px;letter-spacing:8px;font-weight:700">${code}</p><p>If you did not request this, you can ignore this email.</p></div>`,
-    `Your Strap verification code is ${code}. It expires in ${CODE_TTL_MIN} minutes.`);
-}
-async function verifyCode(email, purpose, code) {
-  const result = await pool.query(
-    `SELECT id, code_hash FROM email_verifications
-     WHERE email=$1 AND purpose=$2 AND consumed_at IS NULL AND expires_at > now()
-     ORDER BY created_at DESC LIMIT 1`,
-    [email, purpose]
-  );
-  const row = result.rows[0];
-  if (!row || !safeEqual(row.code_hash, hash(`${CODE_PEPPER}:${email}:${purpose}:${code}`))) return false;
-  await pool.query('UPDATE email_verifications SET consumed_at=now(), verified_at=now() WHERE id=$1', [row.id]);
-  return true;
-}
 async function createSession(userId, res) {
   const token = randomToken();
   const expires = new Date(Date.now() + SESSION_DAYS * 864e5);
@@ -244,18 +182,6 @@ app.get('/api/health', asyncRoute(async (_req, res) => {
   res.json({ ok: true, database: 'connected' });
 }));
 
-app.post('/api/auth/verification/send', auth, asyncRoute(async (req, res) => {
-  const email = req.user.email;
-  if (!emailDeliveryConfigured) return fail(res, 503, 'Security-code email delivery is not configured. Use your Neon Auth account settings.');
-  await issueCode(email, 'verify', 6);
-  res.json({ ok: true, verificationRequired: true });
-}));
-app.post('/api/auth/verification/verify', auth, asyncRoute(async (req, res) => {
-  const code = cleanText(req.body.code, 6);
-  if (!/^\\d{6}$/.test(code)) return fail(res, 400, 'Enter the six-digit verification code.');
-  const ok = await verifyCode(req.user.email, 'verify', code);
-  res.json({ ok });
-}));
 app.post('/api/auth/register', neonIdentity, asyncRoute(async (req, res) => {
   const email = req.neonIdentity.email;
   if (!req.neonIdentity.emailVerified) return fail(res, 403, 'Verify your email with Neon Auth before creating your Strap workspace.');
