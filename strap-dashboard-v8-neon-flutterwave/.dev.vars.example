@@ -1,5 +1,4 @@
 # Copy to .dev.vars for local development. Never commit real secrets.
-SESSION_SECRET=replace-with-a-random-32-byte-secret
 NEON_AUTH_BASE_URL=https://YOUR-NEON-AUTH-HOST/neondb/auth
 NEON_AUTH_JWKS_URL=https://YOUR-NEON-AUTH-HOST/neondb/auth/.well-known/jwks.json
 APP_URL=http://localhost:8787
