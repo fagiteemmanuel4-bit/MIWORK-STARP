@@ -41,9 +41,20 @@
             password: D.password,
             name: normalizedEmail.split('@')[0]
           });
-          if (error) throw error;
-          // Neon Auth automatically sends the verification OTP when Verify at Sign-up
-          // is enabled. Do not send a second code for the initial signup request.
+          if (error) {
+            const detail = String(error.code || error.error?.code || '') + ' ' + String(error.message || error.error?.message || '');
+            // A user may return to signup after closing the tab before verifying.
+            // The Neon identity already exists in that case, so resend its OTP
+            // instead of trapping the user behind an "account already exists" error.
+            if (!/already|exists|registered|duplicate/i.test(detail)) throw error;
+            const { error: resendError } = await client.emailOtp.sendVerificationOtp({
+              email: normalizedEmail,
+              type: 'email-verification'
+            });
+            if (resendError) throw resendError;
+          }
+          // Neon Auth automatically sends the verification OTP for a new account.
+          // Existing unverified accounts are handled by the resend path above.
           D.neonSignupEmail = normalizedEmail;
         } else if (purpose === 'signup' || purpose === 'verify') {
           const { error } = await client.emailOtp.sendVerificationOtp({
