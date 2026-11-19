@@ -62,8 +62,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          curl --retry 5 --retry-delay 3 --retry-connrefused --fail --show-error --silent "$PREVIEW_URL/api/health"
-          echo
+          health="$(curl --retry 5 --retry-delay 3 --retry-connrefused --show-error --silent "$PREVIEW_URL/api/health")"
+          printf "%s\\n" "$health"
+          printf "%s" "$health" | grep -q '"database":"connected"'
           curl --fail --show-error --silent "$PREVIEW_URL/" | grep -qi "<html"
         env:
           PREVIEW_URL: ${{ steps.preview.outputs.url }}
