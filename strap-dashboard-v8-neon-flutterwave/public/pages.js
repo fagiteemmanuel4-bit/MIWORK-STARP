@@ -65,9 +65,14 @@ window.StrapPages = (() => {
           return `<li class="pg-row"><span class="pg-ico">${ic(c.i, 22, 1.8)}</span><div><b>${esc(f.t)}</b>${f.s ? `<small>${esc(f.s)}</small>` : ''}</div><button type="button" class="pg-x" data-del="${i}" aria-label="Remove">${ic('trash', 20, 1.8)}</button></li>`; }).join('')}</ul>`
           : empty(c.ill, c.h, c.p, cta));
     }
-    root.addEventListener('click', e => {
-      if (e.target.closest('[data-add]')) add();
-      const d = e.target.closest('[data-del]'); if (d) { rows.splice(+d.dataset.del, 1); draw(); }
+    root.addEventListener('click', async e => {
+      if (e.target.closest('[data-add]')) return add();
+      const d = e.target.closest('[data-del]');
+      if (d) {
+        const index = +d.dataset.del, removed = rows.splice(index, 1);
+        try { await StrapStore.save(); draw(); ctx.toast('Removed from your workspace'); }
+        catch (error) { rows.splice(index, 0, ...removed); ctx.toast(error.message || 'Could not remove this record.'); draw(); }
+      }
     });
     draw();
   }
@@ -77,7 +82,7 @@ window.StrapPages = (() => {
     const CS = StrapStore.collections, K = StrapKit, P = ctx.products();
     const n = c => P.countIn(c.name);
     const plural = k => `${k} product${k === 1 ? '' : 's'}`;
-    const add = () => formSheet({ title: 'Create collection', fields: CFG.collections.fields, cta: 'Create collection' }, v => {
+    const add = () => formSheet({ title: 'Create collection', fields: CFG.collections.fields, cta: 'Create collection' }, async v => {
       if (CS.find(v[0])) return ctx.toast('You already have a collection with that name');
       let created;
       await StrapStore.batch(async () => { created = CS.add(v[0], v[1] || ''); });
