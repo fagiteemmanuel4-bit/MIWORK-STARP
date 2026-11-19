@@ -415,7 +415,26 @@ window.StrapOnline = (() => {
         if (Dm.state === 'checking') tm = setTimeout(async () => { const id = ++rid, r = await S.api.checkSubdomain(v); if (id !== rid) return; Dm.state = r.available ? 'ok' : 'taken'; subPaint(); }, 420); }
       else if (k === 'custom') Dm.custom = e.target.value;
     });
-    el.addEventListener('change', async e=>{if(e.target.id!=='os-template-file'||!e.target.files[0])return;const f=e.target.files[0];try{const raw=await f.text();let obj=/\.xml$/i.test(f.name)?F.fromXml(raw):JSON.parse(raw);const t=F.validateImport(obj);c.theme={...c.theme,...t.theme};c.sections=JSON.parse(JSON.stringify(t.sections));if(t.template&&F.TEMPLATES[t.template])c.template=t.template;save(c);toast('Template imported. Preview your store.');draw();}catch(err){toast('Import failed: '+(err.message||'Invalid template'));}e.target.value='';});
+      el.addEventListener('change', async e => {
+        if (e.target.id !== 'os-template-file' || !e.target.files[0]) return;
+        const file = e.target.files[0];
+        const previous = { theme: c.theme, sections: c.sections, template: c.template };
+        try {
+          if (file.size > 2 * 1024 * 1024) throw new Error('Template files must be 2 MB or smaller.');
+          const raw = await file.text();
+          const obj = /\.xml$/i.test(file.name) ? F.fromXml(raw) : JSON.parse(raw);
+          const t = F.validateImport(obj);
+          c.theme = { ...c.theme, ...t.theme };
+          c.sections = JSON.parse(JSON.stringify(t.sections));
+          if (t.template && F.TEMPLATES[t.template]) c.template = t.template;
+          if (await save(c)) { toast('Template imported and saved. Preview your store.'); draw(); }
+          else { Object.assign(c, previous); }
+        } catch (err) {
+          Object.assign(c, previous);
+          toast('Import failed: ' + (err.message || 'Invalid template'));
+        }
+        e.target.value = '';
+      });
     window.addEventListener('resize', () => fit(el));
     draw();
   }
