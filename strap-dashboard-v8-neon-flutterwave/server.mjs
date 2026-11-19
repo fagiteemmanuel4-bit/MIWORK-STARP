@@ -237,9 +237,12 @@ app.post('/api/auth/sync', neonIdentity, asyncRoute(async (req, res) => {
 }));;
 app.post('/api/storefront/subdomain/check', auth, asyncRoute(async (req, res) => {
   const name = cleanText(req.body.name, 40).toLowerCase();
-  const reserved = new Set(['www','app','api','admin','mail','shop','store','strap','support','demo','test']);
+  const reserved = new Set(['www','app','api','admin','mail','shop','store','strap','support','demo','test','dashboard','sitemap','robots']);
   if (!/^[a-z0-9](?:[a-z0-9-]{0,28}[a-z0-9])?$/.test(name) || reserved.has(name)) return res.json({ ok: true, available: false });
-  const existing = await pool.query("SELECT 1 FROM businesses WHERE lower(regexp_replace(name,'[^a-zA-Z0-9]+','-','g'))=$1", [name]);
+  const existing = await pool.query(
+    "SELECT 1 FROM account_data a WHERE a.user_id<>$2 AND a.data #>> '{onlineStore,domain,slug}'=$1 LIMIT 1",
+    [name, req.user.id]
+  );
   res.json({ ok: true, available: !existing.rowCount });
 }));
 app.post('/api/storefront/domain/verify', auth, asyncRoute(async (req, res) => {
@@ -343,6 +346,215 @@ app.patch('/api/account/business', auth, asyncRoute(async (req, res) => {
   if (!name) return fail(res, 400, 'Business name is required.');
   await pool.query('UPDATE businesses SET name=$2,updated_at=now() WHERE owner_id=$1 AND is_default=true', [req.user.id, name]);
   res.json({ ok: true });
+}));
+
+
+// Public storefront reads and order writes. The same Neon account document powers
+// the owner dashboard and the externally shareable storefront.
+const publicSlugOk = value => /^[a-z0-9](?:[a-z0-9-]{0,28}[a-z0-9])?$/.test(String(value || ''));
+const htmlEscape = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+const xmlEscape = value => String(value ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&apos;');
+const storeSlug = value => String(value || '').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,60);
+const productPathSlug = product => storeSlug(product.title || 'product') + '/' + encodeURIComponent(String(product.id || ''));
+const safeStoreImage = value => {
+  const url = String(value || '');
+  if (/^https?:\/\/[^\\s"'<>]+$/i.test(url)) return url;
+  if (/^data:image\/(?:png|jpe?g|webp|gif);base64,[A-Za-z0-9+/=]+$/i.test(url) && url.length < 700000) return url;
+  return '';
+};
+async function loadPublicStore(slug, executor = pool, lock = false) {
+  if (!publicSlugOk(slug)) return null;
+  const result = await executor.query(
+    "SELECT a.user_id,a.data->'onlineStore' AS config,a.data->'features' AS features,b.currency " +
+    "FROM account_data a JOIN businesses b ON b.owner_id=a.user_id AND b.is_default=true " +
+    "WHERE a.data #>> '{onlineStore,domain,slug}'=$1 AND a.data #>> '{onlineStore,status}'='live' LIMIT 1" +
+    (lock ? ' FOR UPDATE OF a' : ''),
+    [slug]
+  );
+  if (!result.rowCount) return null;
+  const row = result.rows[0], config = row.config || {};
+  if (config.domain?.type !== 'sub' || config.domain?.status !== 'live') return null;
+  const features = row.features || {}, active = features.active || 'b0';
+  let products = Array.isArray(features.itemsByBranch?.[active]) ? features.itemsByBranch[active] : [];
+  products = products.filter(p => p && p.id && (!p.status || p.status === 'active'));
+  if (config.sync === 'manual') {
+    const ids = new Set(Array.isArray(config.productIds) ? config.productIds.map(String) : []);
+    products = products.filter(p => ids.has(String(p.id)));
+  }
+  return { userId: row.user_id, config, features, products, currency: row.currency || config.currency || CURRENCY };
+}
+const seoDescription = value => cleanText(String(value || '').replace(/<[^>]*>/g,' ').replace(/\\s+/g,' '), 300);
+const productCanonical = (slug, product) => APP_URL + '/store/' + encodeURIComponent(slug) + '/products/' + encodeURIComponent(String(product.id)) + '/' + encodeURIComponent(storeSlug(product.title));
+function storefrontProductCard(slug, product, currency) {
+  const image = safeStoreImage(product.image);
+  const imageHtml = image ? '<img src="' + htmlEscape(image) + '" alt="' + htmlEscape(product.title) + '" loading="lazy">' : '<span>' + htmlEscape(String(product.title || '?').charAt(0).toUpperCase()) + '</span>';
+  const out = !!(product.tracked && !product.sellWhenOut && Number(product.qty || 0) <= 0);
+  return '<article class="stf-p' + (out ? ' out' : '') + '"><a class="stf-product-open" href="/store/' + encodeURIComponent(slug) + '/products/' + encodeURIComponent(String(product.id)) + '/' + encodeURIComponent(storeSlug(product.title)) + '">' +
+    '<div class="stf-img">' + imageHtml + (out ? '<i class="stf-tag dark">Sold out</i>' : '') + '</div><b>' + htmlEscape(product.title) + '</b><small>' + htmlEscape(currency) + ' ' + Math.round(Number(product.price) || 0).toLocaleString('en') + '</small></a></article>';
+}
+function publicStoreMarkup(config, products, slug, product) {
+  const theme = config.theme || {}, font = ['Sora','Inter','DM Serif Display','Space Mono'].includes(theme.font) ? theme.font : 'Sora';
+  const color = v => /^#[0-9a-f]{6}$/i.test(String(v || '')) ? v : '#ffffff';
+  const accent = color(theme.accent || '#e6f53a'), background = color(theme.bg || '#ffffff'), ink = color(theme.ink || '#0a0a0a');
+  const radius = Math.max(0, Math.min(32, Number(theme.radius) || 18));
+  const vars = "--f:'" + font + "',sans-serif;--a:" + accent + ";--bg:" + background + ";--ink:" + ink + ";--r:" + radius + "px";
+  if (product) {
+    const image = safeStoreImage(product.image);
+    return '<div class="stf" style="' + vars + '"><header class="stf-top"><a href="/store/' + encodeURIComponent(slug) + '">' + htmlEscape(config.name || 'Store') + '</a><a class="stf-cart" href="/store/' + encodeURIComponent(slug) + '">Shop all</a></header><main class="stf-sec"><a href="/store/' + encodeURIComponent(slug) + '">← Back to store</a><div class="stf-product-detail">' +
+      (image ? '<img src="' + htmlEscape(image) + '" alt="' + htmlEscape(product.title) + '">' : '') +
+      '<h1>' + htmlEscape(product.title) + '</h1><p class="stf-price">' + htmlEscape(config.currency || CURRENCY) + ' ' + Math.round(Number(product.price) || 0).toLocaleString('en') + '</p>' +
+      '<p>' + htmlEscape(seoDescription(product.description)) + '</p><p>' + (product.tracked && Number(product.qty || 0) <= 0 ? 'Sold out' : 'Available') + '</p>' +
+      '<p>Contact ' + htmlEscape(config.contact?.email || config.contact?.phone || config.name || 'the store') + ' to order.</p></div></main><footer class="stf-foot">' + htmlEscape(config.name || '') + '<small>Powered by Strap</small></footer></div>';
+  }
+  const list = products || [], sections = Array.isArray(config.sections) ? config.sections : [];
+  const renderSection = section => {
+    const type = section.type;
+    if (type === 'announcement') return '<div class="stf-ann">' + htmlEscape(section.text || 'Welcome to our store') + '</div>';
+    if (type === 'hero') return '<section class="stf-hero ' + htmlEscape(section.style || 'center') + '"><div><h1>' + htmlEscape(config.name || 'Your store') + '</h1><p>' + htmlEscape(config.tagline || 'Good things, delivered to your door.') + '</p><a class="stf-btn" href="#stf-products">' + htmlEscape(section.cta || 'Shop now') + '</a></div></section>';
+    if (type === 'banner') return '<section class="stf-banner"><div><h2>' + htmlEscape(section.title || 'A little something special') + '</h2><p>' + htmlEscape(section.text || '') + '</p></div></section>';
+    if (type === 'products') return '<section class="stf-sec" id="stf-products"><h2>' + htmlEscape(section.title || 'Products') + '</h2>' + (list.length ? '<div class="stf-grid ' + (section.layout === 'list' ? 'list' : '') + '">' + list.map(p => storefrontProductCard(slug,p,config.currency || CURRENCY)).join('') + '</div>' : '<p class="stf-empty">No active products are available yet.</p>') + '</section>';
+    if (type === 'about') return '<section class="stf-sec"><h2>' + htmlEscape(section.title || 'About us') + '</h2><p class="stf-about">' + htmlEscape(section.text || config.tagline || (config.name + ' welcomes you.')) + '</p></section>';
+    if (type === 'contact') return '<section class="stf-sec"><h2>' + htmlEscape(section.title || 'Contact') + '</h2><p class="stf-about">' + [config.contact?.email,config.contact?.phone,config.contact?.address].filter(Boolean).map(htmlEscape).join(' · ') + '</p></section>';
+    if (type === 'testimonials') return '<section class="stf-sec"><h2>' + htmlEscape(section.title || 'What customers say') + '</h2><blockquote class="stf-quote">“' + htmlEscape(section.text || 'Lovely quality and service.') + '”</blockquote></section>';
+    if (type === 'faq') return '<section class="stf-sec"><h2>' + htmlEscape(section.title || 'FAQs') + '</h2><details class="stf-faq"><summary>' + htmlEscape(section.question || 'How long does delivery take?') + '</summary><p>' + htmlEscape(section.answer || 'Contact the store for delivery details.') + '</p></details></section>';
+    if (type === 'policies') return '<section class="stf-sec"><h2>' + htmlEscape(section.title || 'Store policies') + '</h2><p class="stf-about">' + htmlEscape(section.text || 'Contact the store for returns and delivery information.') + '</p></section>';
+    if (type === 'footer') return '<footer class="stf-foot"><b>' + htmlEscape(config.name || '') + '</b><span>' + [config.contact?.email,config.contact?.phone,config.contact?.address].filter(Boolean).map(htmlEscape).join(' · ') + '</span><small>Powered by Strap</small></footer>';
+    return '';
+  };
+  return '<div class="stf" style="' + vars + '"><header class="stf-top"><b>' + htmlEscape(config.name || 'Your store') + '</b><a class="stf-cart" href="#stf-products">Shop products</a></header>' +
+    (sections.length ? sections.map(renderSection).join('') : '<section class="stf-hero"><div><h1>' + htmlEscape(config.name || 'Your store') + '</h1><p>' + htmlEscape(config.tagline || '') + '</p></div></section>') + '</div>';
+}
+function renderPublicStorePage(slug, config, products, product) {
+  const storeName = cleanText(config.name || 'Online store', 140);
+  const productTitle = product ? cleanText(product.seo?.title || product.title, 180) : storeName;
+  const title = product ? productTitle + ' | ' + storeName : storeName + ' | Online store';
+  const description = seoDescription(product?.seo?.description || product?.description || config.tagline || ('Shop ' + storeName + ' online. Browse products and place an order.'));
+  const canonical = product ? productCanonical(slug, product) : APP_URL + '/store/' + encodeURIComponent(slug);
+  const image = safeStoreImage(product?.image || products.find(p => safeStoreImage(p.image))?.image || '');
+  const productLd = product ? { '@context':'https://schema.org', '@type':'Product', name:product.title, description, image:image?[image]:undefined, sku:product.sku || undefined, offers:{ '@type':'Offer', priceCurrency:config.currency || CURRENCY, price:String(Math.max(0,Number(product.price)||0)), availability:product.tracked && Number(product.qty||0)<=0 ? 'https://schema.org/OutOfStock' : 'https://schema.org/InStock', url:canonical } } : null;
+  const storeLd = { '@context':'https://schema.org', '@type':'OnlineStore', name:storeName, url:APP_URL + '/store/' + encodeURIComponent(slug), description };
+  const jsonld = JSON.stringify(productLd || storeLd).replace(/</g,'\\u003c');
+  const context = JSON.stringify({ slug, productId:product?.id || null }).replace(/</g,'\\u003c');
+  const body = publicStoreMarkup(config, products, slug, product);
+  const css = '<link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/products.css"><link rel="stylesheet" href="/storeshop.css">';
+  const scripts = '<script src="/ui.js" defer></script><script src="/store.js" defer></script><script src="/kit.js" defer></script><script src="/storefront.js" defer></script><script src="/storeshop.js" defer></script><script src="/store-runtime.js" defer></script>';
+  return '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>' + htmlEscape(title) + '</title>' +
+    '<meta name="description" content="' + htmlEscape(description) + '"><link rel="canonical" href="' + htmlEscape(canonical) + '">' +
+    '<meta property="og:type" content="' + (product ? 'product' : 'website') + '"><meta property="og:title" content="' + htmlEscape(title) + '"><meta property="og:description" content="' + htmlEscape(description) + '">' +
+    (image ? '<meta property="og:image" content="' + htmlEscape(image) + '">' : '') +
+    '<meta name="twitter:card" content="' + (image ? 'summary_large_image' : 'summary') + '"><meta name="twitter:title" content="' + htmlEscape(title) + '"><meta name="twitter:description" content="' + htmlEscape(description) + '">' +
+    '<meta name="robots" content="index,follow,max-image-preview:large"><script type="application/ld+json">' + jsonld + '</script>' + css + '</head><body style="margin:0"><main id="store-root">' + body + '</main><script>window.STRAP_PUBLIC_CONTEXT=' + context + ';</script>' + scripts + '</body></html>';
+}
+app.get('/api/public/store/:slug', asyncRoute(async (req, res) => {
+  const store = await loadPublicStore(String(req.params.slug || '').toLowerCase());
+  if (!store) return fail(res, 404, 'This storefront is not available.');
+  res.set('Cache-Control', 'public, max-age=60, stale-while-revalidate=300');
+  res.json({ ok: true, store: store.config, products: store.products, currency: store.currency });
+}));
+app.post('/api/public/store/:slug/orders', asyncRoute(async (req, res) => {
+  const slug = String(req.params.slug || '').toLowerCase();
+  if (!publicSlugOk(slug)) return fail(res, 404, 'This storefront is not available.');
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await client.query(
+      "SELECT a.user_id,a.data FROM account_data a WHERE a.data #>> '{onlineStore,domain,slug}'=$1 FOR UPDATE",
+      [slug]
+    );
+    if (!result.rowCount) { await client.query('ROLLBACK'); return fail(res, 404, 'This storefront is not available.'); }
+    const ownerId = result.rows[0].user_id, data = result.rows[0].data || {}, config = data.onlineStore || {};
+    if (config.status !== 'live' || config.domain?.type !== 'sub' || config.domain?.status !== 'live') { await client.query('ROLLBACK'); return fail(res, 404, 'This storefront is not currently taking orders.'); }
+    const features = data.features || {}, active = features.active || 'b0';
+    const allProducts = Array.isArray(features.itemsByBranch?.[active]) ? features.itemsByBranch[active] : [];
+    const visible = allProducts.filter(p => p && (!p.status || p.status === 'active'));
+    const productMap = new Map(visible.map(p => [String(p.id), p]));
+    const manualIds = new Set(Array.isArray(config.productIds) ? config.productIds.map(String) : []);
+    const customer = req.body?.customer || {}, name = cleanText(customer.name, 120), phone = cleanText(customer.phone, 40), email = emailNorm(customer.email);
+    if (name.length < 2 || phone.replace(/\\D/g,'').length < 7 || (email && !/^[^\\s@]+@[^\\s@]+\\.[^\\s@]{2,}$/.test(email))) { await client.query('ROLLBACK'); return fail(res, 400, 'Enter a valid name and phone number before placing your order.'); }
+    const method = req.body?.method, payment = req.body?.payment;
+    if (!['delivery','pickup'].includes(method) || !['cod','transfer'].includes(payment)) { await client.query('ROLLBACK'); return fail(res, 400, 'Choose a valid delivery and payment method.'); }
+    const address = method === 'delivery' ? cleanText(req.body?.address, 500) : 'Pickup at store';
+    if (method === 'delivery' && address.length < 5) { await client.query('ROLLBACK'); return fail(res, 400, 'Enter your delivery address.'); }
+    const submitted = Array.isArray(req.body?.items) ? req.body.items : [];
+    if (!submitted.length || submitted.length > 40) { await client.query('ROLLBACK'); return fail(res, 400, 'Your cart is empty or contains too many different products.'); }
+    const lines = []; let subtotal = 0;
+    for (const requested of submitted) {
+      const product = productMap.get(String(requested.id));
+      const qty = Number(requested.qty);
+      if (!product || (config.sync === 'manual' && !manualIds.has(String(product.id)))) { await client.query('ROLLBACK'); return fail(res, 409, 'A product in your cart is no longer available. Refresh the store and try again.'); }
+      if (!Number.isInteger(qty) || qty < 1 || qty > 99) { await client.query('ROLLBACK'); return fail(res, 400, 'A product quantity is invalid.'); }
+      if (product.tracked && !product.sellWhenOut && Number(product.qty || 0) < qty) { await client.query('ROLLBACK'); return fail(res, 409, 'There is not enough stock for ' + cleanText(product.title,100) + '. Please update your cart.'); }
+      const selected = requested.options && typeof requested.options === 'object' ? requested.options : {};
+      for (const group of (Array.isArray(product.options) ? product.options : [])) {
+        if (!group?.name || !Array.isArray(group.values) || !group.values.length) continue;
+        if (!selected[group.name] || !group.values.includes(String(selected[group.name]))) { await client.query('ROLLBACK'); return fail(res, 400, 'Choose all options for ' + cleanText(product.title,100) + '.'); }
+      }
+      const price = Math.max(0, Number(product.price) || 0);
+      subtotal += price * qty;
+      if (product.tracked) product.qty = Math.max(0, Number(product.qty || 0) - qty);
+      lines.push({ id:String(product.id), title:cleanText(product.title,160), price, qty, options:selected, image:safeStoreImage(product.image) });
+    }
+    let discount = 0;
+    const promoCode = cleanText(req.body?.promo,40).toUpperCase();
+    if (promoCode) {
+      const promos = Array.isArray(config.promos) ? config.promos : [{ code:'WELCOME10', type:'pct', value:10 }];
+      const promo = promos.find(p => String(p.code || '').toUpperCase() === promoCode);
+      if (!promo) { await client.query('ROLLBACK'); return fail(res, 400, 'That discount code is no longer valid.'); }
+      const value = Math.max(0, Number(promo.value) || 0);
+      discount = Math.min(subtotal, promo.type === 'pct' ? subtotal * Math.min(100,value) / 100 : value);
+    }
+    const shipping = config.shipping || {}, freeOver = Math.max(0, Number(shipping.freeOver) || 0);
+    const delivery = method === 'delivery' && !(freeOver > 0 && subtotal - discount >= freeOver) ? Math.max(0, Number(shipping.fee) || 0) : 0;
+    const total = Math.max(0, subtotal - discount + delivery);
+    const storeState = data.store && typeof data.store === 'object' ? data.store : {};
+    const orders = Array.isArray(storeState.orders) ? storeState.orders : [];
+    const now = Date.now(), orderId = 'O-' + now.toString(36).toUpperCase() + '-' + crypto.randomBytes(3).toString('hex').toUpperCase();
+    const tracking = 'ST-' + now.toString(36).toUpperCase() + crypto.randomBytes(2).toString('hex').toUpperCase();
+    const order = {
+      id:orderId, tracking, ts:now, status:'new', paid:false, paymentStatus:'unpaid', channel:'online',
+      customer:{ name, phone, email }, address, note:cleanText(req.body?.note,500), method, payment,
+      lines, subtotal, discount, delivery, total, currency:config.currency || CURRENCY,
+      events:[{ status:'new', at:now, note:'Order received from online store' }]
+    };
+    data.store = { ...storeState, orders:[order,...orders].slice(0,5000), oseq:(Number(storeState.oseq)||1000)+1 };
+    data.features = features;
+    await client.query('UPDATE account_data SET data=$2::jsonb,updated_at=now() WHERE user_id=$1', [ownerId, JSON.stringify(data)]);
+    await client.query('COMMIT');
+    res.status(201).json({ ok:true, order });
+  } catch (error) { await client.query('ROLLBACK'); throw error; }
+  finally { client.release(); }
+}));
+app.get('/robots.txt', asyncRoute(async (_req,res) => {
+  res.type('text/plain').send('User-agent: *\\nAllow: /store/\\nDisallow: /dashboard\\nDisallow: /api/\\nSitemap: ' + APP_URL + '/sitemap.xml\\n');
+}));
+app.get('/sitemap.xml', asyncRoute(async (_req,res) => {
+  const result = await pool.query("SELECT data->'onlineStore' AS config,data->'features' AS features FROM account_data WHERE data->'onlineStore' IS NOT NULL");
+  const urls = [];
+  for (const row of result.rows) {
+    const c = row.config || {}, slug = c.domain?.slug;
+    if (c.status !== 'live' || c.domain?.type !== 'sub' || c.domain?.status !== 'live' || !publicSlugOk(slug)) continue;
+    const updated = c.updatedAt || c.createdAt || new Date().toISOString();
+    const base = APP_URL + '/store/' + encodeURIComponent(slug);
+    urls.push('<url><loc>' + xmlEscape(base) + '</loc><lastmod>' + xmlEscape(new Date(updated).toISOString()) + '</lastmod></url>');
+    const feat = row.features || {}, list = Array.isArray(feat.itemsByBranch?.[feat.active || 'b0']) ? feat.itemsByBranch[feat.active || 'b0'] : [];
+    const items = c.sync === 'manual' ? list.filter(p => (c.productIds || []).includes(p.id)) : list;
+    for (const p of items.filter(x => x && (!x.status || x.status === 'active')).slice(0,50000-urls.length)) {
+      urls.push('<url><loc>' + xmlEscape(productCanonical(slug,p)) + '</loc><lastmod>' + xmlEscape(new Date(c.updatedAt || c.createdAt || Date.now()).toISOString()) + '</lastmod></url>');
+    }
+  }
+  res.type('application/xml').send('<?xml version="1.0" encoding="UTF-8"?>\\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">' + urls.join('') + '</urlset>');
+}));
+app.get('/store/:slug/products/:productId/:productSlug', asyncRoute(async (req,res) => {
+  const slug = String(req.params.slug || '').toLowerCase(), store = await loadPublicStore(slug);
+  if (!store) return res.status(404).type('text/html').send('<!doctype html><title>Store not found</title><h1>Store not found</h1>');
+  const product = store.products.find(p => String(p.id) === String(req.params.productId));
+  if (!product) return res.status(404).type('text/html').send('<!doctype html><title>Product not found</title><h1>Product not found</h1>');
+  res.set('Cache-Control','public, max-age=60, stale-while-revalidate=300').type('html').send(renderPublicStorePage(slug,store.config,store.products,product));
+}));
+app.get('/store/:slug', asyncRoute(async (req,res) => {
+  const slug = String(req.params.slug || '').toLowerCase(), store = await loadPublicStore(slug);
+  if (!store) return res.status(404).type('text/html').send('<!doctype html><title>Store not found</title><h1>Store not found</h1>');
+  res.set('Cache-Control','public, max-age=60, stale-while-revalidate=300').type('html').send(renderPublicStorePage(slug,store.config,store.products,null));
 }));
 
 app.post('/api/payments/initialize', auth, (_req, res) => fail(res, 503, 'Payments are coming soon. You can use Strap’s free workspace in the meantime.'));
