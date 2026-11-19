@@ -323,7 +323,10 @@ window.StrapOnline = (() => {
       main: () => hd('Store settings') + `<div class="os-rows">${row('edit', 'Store details', c.name, 'details')}${row('palette', 'Appearance', (F.TEMPLATES[c.template] || { name: 'Custom' }).name + ' · ' + c.theme.font, 'appearance')}${row('globe', 'Domain', url(c), 'domain')}${row('bag', 'Products', c.sync === 'auto' ? 'Auto-sync' : 'Manual', 'products')}${row('layers', 'Content & templates', 'Sections', 'tools')}</div>
         <div class="os-rows"><div class="os-row static"><span class="os-ic">${ic('store', 20, 1.8)}</span><span>Store is open</span><button type="button" class="os-sw${c.status === 'live' ? ' on' : ''}" data-act="live" role="switch" aria-checked="${c.status === 'live'}" aria-label="Store is open"></button></div></div>
         <button type="button" class="os-danger" data-act="del">${ic('trash', 20, 1.9)}Delete online store</button>`,
-      details: () => hd('Store details') + lf('name', 'Store name', c.name) + lf('tagline', 'Short description', c.tagline) + lf('email', 'Store email', c.contact.email, 'email') + lf('phone', 'Phone number', c.contact.phone, 'tel') + lf('country', 'Country', c.contact.country) + lf('address', 'City or address', c.contact.address) + `<button type="button" class="pm-add wide" data-act="saved">Save changes</button>`,
+      details: () => hd('Store details') + lf('name', 'Store name', c.name) + lf('tagline', 'Short description', c.tagline) + lf('email', 'Store email', c.contact.email, 'email') + lf('phone', 'Phone number', c.contact.phone, 'tel') + lf('country', 'Country', c.contact.country) + lf('address', 'City or address', c.contact.address) +
+        `<h2 class="pm-h">Search engine listing</h2><p class="os-p2">These fields appear in search results and when your store link is shared.</p>` +
+        lf('seoTitle', 'SEO page title', c.seo?.title || c.name) + lf('seoDescription', 'SEO description', c.seo?.description || c.tagline) +
+        `<button type="button" class="pm-add wide" data-act="saved">Save changes</button>`,
       appearance: () => { const m = Object.keys(F.MODES).find(k => F.MODES[k].bg === c.theme.bg) || ''; return hd('Appearance') + mini(c, 'lg') + `
         <h2 class="pm-h">Template</h2><div class="os-chips2">${Object.entries(F.TEMPLATES).map(([k, t]) => `<button type="button" class="os-chip${c.template === k ? ' on' : ''}" data-act="set" data-k="template" data-v="${k}">${t.name}</button>`).join('')}</div>
         <h2 class="pm-h">Colours</h2>${seg('mode', Object.entries(F.MODES).map(([k, x]) => [k, x.l]), m)}<div class="os-sw-row">${F.ACCENTS.map(a => `<button type="button" class="os-dot${c.theme.accent === a ? ' on' : ''}" style="--c:${a}" data-act="set" data-k="accent" data-v="${a}" aria-label="Accent ${a}"></button>`).join('')}</div>
@@ -363,7 +366,14 @@ window.StrapOnline = (() => {
         if (g('name').length < 2) return toast('Enter your store name');
         if (!/^\S+@\S+\.\S+$/.test(g('email'))) return toast('Enter a valid email address');
         if (g('phone').replace(/\D/g, '').length < 7) return toast('Enter a valid phone number');
-        c.name = g('name'); c.tagline = g('tagline'); Object.assign(c.contact, { email: g('email'), phone: g('phone'), country: g('country'), address: g('address') }); save(c); K.fx('ok'); toast('Store details saved'); stack.pop(); return draw();
+        const seoTitle = g('seoTitle'), seoDescription = g('seoDescription');
+        if (seoTitle.length > 180) return toast('Keep the SEO title under 180 characters.');
+        if (seoDescription.length > 320) return toast('Keep the SEO description under 320 characters.');
+        c.name = g('name'); c.tagline = g('tagline');
+        Object.assign(c.contact, { email: g('email'), phone: g('phone'), country: g('country'), address: g('address') });
+        c.seo = { ...(c.seo || {}), title: seoTitle, description: seoDescription };
+        if (!(await save(c))) return;
+        K.fx('ok'); toast('Store details and SEO saved'); stack.pop(); return draw();
       }
       if (act === 'savesub') { c.domain = { type:'sub', slug:Dm.sub, host:location.host + '/store/' + Dm.sub, status:'live', token:'' }; await save(c); K.fx('ok'); toast('Store address updated'); Dm.sub = ''; Dm.state = 'idle'; return draw(); }
       if (act === 'usesub') { const nextSlug = c.domain.slug || slug(c.name); c.domain = { type:'sub', slug:nextSlug, host:location.host + '/store/' + nextSlug, status:'live', token:'' }; await save(c); toast('Using your free Strap address'); return draw(); }
