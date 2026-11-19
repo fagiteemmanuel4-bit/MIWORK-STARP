@@ -189,7 +189,8 @@ async function auth(req, res, next) {
           [identity.email]
         );
         if (result.rowCount) {
-          await pool.query('UPDATE users SET neon_auth_user_id=$2,updated_at=now() WHERE id=$1 AND neon_auth_user_id IS NULL', [result.rows[0].id, identity.id]);
+          const linked = await pool.query('UPDATE users SET neon_auth_user_id=$2,updated_at=now() WHERE id=$1 AND neon_auth_user_id IS NULL RETURNING id', [result.rows[0].id, identity.id]);
+          if (!linked.rowCount) return fail(res, 409, 'This email is already linked to another authentication account.');
         }
       }
       if (result.rowCount) {
