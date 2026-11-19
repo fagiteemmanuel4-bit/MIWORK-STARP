@@ -297,7 +297,7 @@ window.StrapProducts = (() => {
     function csvPicker() {
       fOpen(`${top()}<div class="fl-body"><div class="fl-hero">${U.illus('csv')}</div><h1>Import via CSV</h1><p class="fl-sub">Upload a spreadsheet from your old store, or a file you prepared yourself.</p>
         <label class="fl-drop"><input type="file" accept=".csv,.txt" hidden><span class="fl-dico">${ic('upload', 28, 1.8)}</span><b>Choose a file</b><small>or drag and drop it here</small></label>
-        <p class="fl-fm">Accepts .csv, .txt and .xls</p>
+        <p class="fl-fm">Accepts .csv and .txt files up to 5 MB</p>
         <ul class="fl-tips"><li>${ic('check', 16, 2.6)}<span>A <b>Title</b> column is required</span></li><li>${ic('check', 16, 2.6)}<span>Optional: Price, Quantity, Status, SKU, Image</span></li></ul>
         <button type="button" class="pm-ghost fl-link" data-a="sample">${ic('download', 18, 2)} Download sample CSV</button></div>`);
       A.file = csvRun;
@@ -400,9 +400,11 @@ window.StrapProducts = (() => {
           <div class="pm-drop">
             <div class="pm-thumbs" hidden></div>
             <div class="pm-dacts"><button type="button" class="pm-pill" data-upload>Upload new</button><button type="button" class="pm-ghost" data-existing>Select existing</button></div>
-            <small>Accepts images, videos, or 3D models</small>
+            <small>Choose files to preview them in this browser. To publish an image on your public store, add a permanent HTTPS image URL below.</small>
             <input type="file" accept="image/*,video/*,.glb,.gltf" multiple hidden data-file>
           </div>
+          <label class="pm-fl" style="margin-top:12px"><span>Public image URL</span><input name="imageUrl" type="url" inputmode="url" placeholder="https://images.example.com/product.jpg" autocomplete="url"></label>
+          <p class="pm-hint">Use a publicly accessible HTTPS image URL. Cloud image uploads are not enabled on this preview account yet.</p>
           <p class="pm-lb">Category</p>
           <label class="pm-fl sel"><select name="category"><option value="">Choose a product category</option>${CATEGORIES.map(c => `<option>${c}</option>`).join('')}</select>${ic('chevUD', 18, 2)}</label>
           <p class="pm-hint">Helps organise your catalogue and makes search and filters work better.</p>
@@ -598,7 +600,7 @@ window.StrapProducts = (() => {
       set('price', p.price); set('compare', p.compareAt); set('cost', p.cost); set('unit', p.unitPrice); set('qty', p.qty);
       set('len', p.size && p.size.l); set('wid', p.size && p.size.w); set('hei', p.size && p.size.h); set('dunit', p.size && p.size.unit);
       set('wt', p.weight && p.weight.v); set('wunit', p.weight && p.weight.unit);
-      set('seoTitle', p.seo && p.seo.title); set('seoDesc', p.seo && p.seo.description);
+      set('seoTitle', p.seo && p.seo.title); set('seoDesc', p.seo && p.seo.description); set('imageUrl', p.image);
       $('.pm-ed', page).innerHTML = p.description || '';
       const rv = (k, show) => { const f = $(`[data-f="${k}"]`, page), c = $(`.pm-chip[data-reveal="${k}"]`, page); if (f) f.hidden = !show; if (c) c.classList.toggle('on', show); };
       rv('cmp', !!p.compareAt); rv('unit', !!p.unitPrice); rv('cost', !!p.cost); rv('sku', !!p.sku); rv('barcode', !!p.barcode); rv('origin', !!p.origin); rv('hs', !!p.hs);
@@ -623,6 +625,12 @@ window.StrapProducts = (() => {
       const title = form.title.value.trim();
       if (!title) { form.title.focus(); form.title.closest('.pm-fl').classList.add('bad'); setTimeout(() => form.title.closest('.pm-fl').classList.remove('bad'), 900); return toast('Add a product title first'); }
       const g = n => form[n] ? form[n].value : '';
+      const imageUrl = g('imageUrl').trim();
+      if (imageUrl && !/^https:\/\/[^\s"'<>]+$/i.test(imageUrl)) return toast('Use a publicly accessible HTTPS image URL.');
+      const localOnlyFiles = files.filter(f => f.file || /^blob:/i.test(f.url || ''));
+      if (localOnlyFiles.length && !imageUrl) return toast('This preview has no cloud media storage yet. Add a permanent HTTPS image URL or remove the local file before saving.');
+      const publicFiles = files.filter(f => /^https?:\/\//i.test(f.url || '')).map(({ name, type, url }) => ({ name, type, url }));
+      if (imageUrl && !publicFiles.some(f => f.url === imageUrl)) publicFiles.unshift({ name: 'Product image', type: 'image/url', url: imageUrl });
       const product = {
         id: editing ? editing.id : undefined,
         title, description: $('.pm-ed', page).innerHTML, category: g('category'), price: +g('price') || 0, compareAt: +g('compare') || null, cost: +g('cost') || null, unitPrice: g('unit'),
@@ -631,13 +639,14 @@ window.StrapProducts = (() => {
         physical: $('[data-sw=physical]', page).classList.contains('on'), package: g('package'),
         size: { l: g('len'), w: g('wid'), h: g('hei'), unit: g('dunit') }, weight: { v: g('wt'), unit: g('wunit') }, origin: g('origin'), hs: g('hs'),
         options: $$('.pm-opt2', page).map(o => ({ name: $('[data-on]', o).value.trim(), values: $('[data-ov]', o).value.split(',').map(s => s.trim()).filter(Boolean) })).filter(o => o.name && o.values.length),
-        seo: { title: g('seoTitle'), description: g('seoDesc') }, status: g('status'), type: g('type'), vendor: g('vendor'), layout: g('layout'),
+        seo: { title: g('seoTitle'), description: g('seoDesc') }, image: imageUrl || (publicFiles.find(f => f.type.startsWith('image')) || {}).url || '', files: publicFiles,
+        status: g('status'), type: g('type'), vendor: g('vendor'), layout: g('layout'),
         collections: $$('[data-tags=collections] .pm-tag > span', page).map(x => x.textContent), tags: $$('[data-tags=tags] .pm-tag > span', page).map(x => x.textContent)
       };
       const btn = $('[data-save]', page), idle = editing ? 'Save changes' : 'Save product'; btn.disabled = true; btn.textContent = 'Saving…';
       try {
         const saved = await api.saveProduct({ ...product, media: files.map(f => f.file).filter(Boolean) });
-        const rec = { ...product, id: saved.id, image: (files.find(f => f.type.startsWith('image')) || {}).url || '', files: files.map(({ name, type, url }) => ({ name, type, url })) };
+        const rec = { ...product, id: saved.id };
         if (editing) { const i = items.findIndex(x => x.id === editing.id); if (i > -1) items[i] = rec; } else items.unshift(rec);
         renderAll(); closePage(); toast(editing ? 'Changes saved' : 'Product added');
       } catch (err) { toast(err.message || 'Could not save. Check your connection and try again.'); }
