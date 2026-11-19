@@ -216,7 +216,7 @@ app.post('/api/auth/sync', neonIdentity, asyncRoute(async (req, res) => {
       await client.query('BEGIN');
       const inserted = await client.query(
         'INSERT INTO users(email,password_hash,full_name,photo_url,neon_auth_user_id) VALUES($1,$2,$3,$4,$5) RETURNING id,email,full_name,photo_url,created_at',
-        [req.neonIdentity.email, await bcrypt.hash(randomToken(), 12), req.neonIdentity.name, req.neonIdentity.photoUrl, req.neonIdentity.id]
+        [req.neonIdentity.email, 'NEON_AUTH_ONLY', req.neonIdentity.name, req.neonIdentity.photoUrl, req.neonIdentity.id]
       );
       const user = inserted.rows[0];
       await client.query(
