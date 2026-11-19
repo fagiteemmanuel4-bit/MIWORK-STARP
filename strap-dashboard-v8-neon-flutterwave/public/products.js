@@ -665,6 +665,7 @@ window.StrapProducts = (() => {
       };
       const btn = $('[data-save]', page), idle = editing ? 'Save changes' : 'Save product'; btn.disabled = true; btn.textContent = 'Saving…';
       const uploadedFiles = [];
+      let productSaveAttempted = false;
       try {
         for (const entry of localFiles) {
           const file = entry.file;
@@ -683,14 +684,20 @@ window.StrapProducts = (() => {
         const allFiles = [...publicFiles, ...uploadedFiles.map(({ name, type, url }) => ({ name, type, url }))];
         product.files = allFiles;
         if (!imageUrl) product.image = (allFiles.find(f => f.type.startsWith('image')) || {}).url || '';
+        productSaveAttempted = true;
         const saved = await api.saveProduct(product);
         const rec = { ...product, id: saved.id };
         if (editing) { const i = items.findIndex(x => x.id === editing.id); if (i > -1) items[i] = rec; } else items.unshift(rec);
         renderAll(); closePage(); toast(editing ? 'Changes saved' : 'Product added');
       } catch (err) {
-        await Promise.all(uploadedFiles.map(f => StrapAPI.request('/api/media/object', {
-          method: 'DELETE', body: JSON.stringify({ key: f.key })
-        }).catch(() => null)));
+        // Clean up uploads only when the product write was never attempted.
+        // If the write response was lost after a database commit, retaining the
+        // image avoids leaving a successfully saved product with a broken URL.
+        if (!productSaveAttempted) {
+          await Promise.all(uploadedFiles.map(f => StrapAPI.request('/api/media/object', {
+            method: 'DELETE', body: JSON.stringify({ key: f.key })
+          }).catch(() => null)));
+        }
         toast(err.message || 'Could not save. Check your connection and try again.');
       }
       btn.disabled = false; btn.textContent = idle;
