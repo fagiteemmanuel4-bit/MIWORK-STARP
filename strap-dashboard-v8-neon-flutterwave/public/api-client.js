@@ -25,7 +25,6 @@
     const auth = await waitForAuth();
     if (typeof auth.getToken === 'function') return await auth.getToken();
     const client = auth.client;
-    if (typeof client.getJWTToken === 'function') return await client.getJWTToken();
     if (typeof client.token === 'function') {
       const result = await client.token();
       if (result?.error) throw result.error;

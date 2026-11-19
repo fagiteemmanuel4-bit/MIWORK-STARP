@@ -31,7 +31,7 @@
   </div>
 </div>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
-<script src="api-client.js"></script>
+<script src="api-client.js?v=20261119-jwt-fix"></script>
 <script type="module">
 import { createAuthClient } from "https://esm.sh/@neondatabase/auth@0.7.0-beta?bundle";
 const authClient = createAuthClient("https://ep-old-night-bdy63bd2.neonauth.c-8.us-east-2.aws.neon.tech/neondb/auth");
@@ -39,8 +39,10 @@ window.StrapNeonAuth = {
   client: authClient,
   async getToken() {
     try {
-      const token = await authClient.getJWTToken();
-      if (!token) throw new Error("No active Neon Auth session token.");
+      const { data, error } = await authClient.token();
+      if (error) throw error;
+      const token = data?.token;
+      if (!token) throw new Error("Neon Auth did not return a session JWT.");
       return token;
     } catch (error) {
       console.error("Neon Auth session token unavailable:", error);
