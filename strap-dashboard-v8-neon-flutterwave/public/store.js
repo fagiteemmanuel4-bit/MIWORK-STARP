@@ -110,7 +110,10 @@ window.StrapStore = (() => {
     async pullOrders() {
       await window.StrapAPI.refreshData();
       const latest = window.StrapAPI.data.get('store', {}) || {};
+      Object.assign(S, latest);
       S.orders = Array.isArray(latest.orders) ? latest.orders : [];
+      if (window.StrapFeatures) await window.StrapFeatures.hydrate();
+      window.dispatchEvent(new CustomEvent('strap:remote-data-refreshed', { detail: { sections: ['store','features'] } }));
       return S.orders;
     }
   };
