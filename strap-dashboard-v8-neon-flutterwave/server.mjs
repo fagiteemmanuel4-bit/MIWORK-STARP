@@ -305,12 +305,12 @@ app.post('/api/auth/register', neonIdentity, asyncRoute(async (req, res) => {
 app.post('/api/auth/sync', neonIdentity, asyncRoute(async (req, res) => {
   if (!req.neonIdentity.emailVerified) return fail(res, 403, 'Verify your email with Neon Auth before signing in.');
   let result = await pool.query(
-    'SELECT u.id,u.email,u.full_name,u.photo_url,u.created_at,b.name AS business_name,b.currency,b.country FROM users u LEFT JOIN businesses b ON b.owner_id=u.id AND b.is_default=true WHERE u.neon_auth_user_id=$1 LIMIT 1',
+    'SELECT u.id,u.email,u.full_name,u.photo_url,u.neon_auth_user_id,u.created_at,b.name AS business_name,b.currency,b.country FROM users u LEFT JOIN businesses b ON b.owner_id=u.id AND b.is_default=true WHERE u.neon_auth_user_id=$1 LIMIT 1',
     [req.neonIdentity.id]
   );
   if (!result.rowCount) {
     result = await pool.query(
-      'SELECT u.id,u.email,u.full_name,u.photo_url,u.created_at,b.name AS business_name,b.currency,b.country FROM users u LEFT JOIN businesses b ON b.owner_id=u.id AND b.is_default=true WHERE u.email=$1 LIMIT 1',
+      'SELECT u.id,u.email,u.full_name,u.photo_url,u.neon_auth_user_id,u.created_at,b.name AS business_name,b.currency,b.country FROM users u LEFT JOIN businesses b ON b.owner_id=u.id AND b.is_default=true WHERE u.email=$1 LIMIT 1',
       [req.neonIdentity.email]
     );
   }
