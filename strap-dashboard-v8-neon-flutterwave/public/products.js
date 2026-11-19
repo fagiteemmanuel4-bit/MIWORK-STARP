@@ -672,11 +672,11 @@ window.StrapProducts = (() => {
       inCollection: name => items.filter(p => (p.collections || []).includes(name)).map(p => p.id),
       async setCollection(name, ids) {
         const want = new Set(ids);
-        items.forEach(p => { const has = (p.collections || []).includes(name), on = want.has(p.id); if (on && !has) p.collections = [...(p.collections || []), name]; if (!on && has) p.collections = p.collections.filter(x => x !== name); });
-        await StrapFeatures.setItems(items); renderAll();
+        const next = items.map(p => { const current = p.collections || [], has = current.includes(name), on = want.has(p.id); return { ...p, collections: on && !has ? [...current, name] : !on && has ? current.filter(x => x !== name) : current }; });
+        await StrapFeatures.setItems(next); items = StrapFeatures.items(); renderAll();
       },
-      async dropCollection(name) { items.forEach(p => { if ((p.collections || []).includes(name)) p.collections = p.collections.filter(x => x !== name); }); await StrapFeatures.setItems(items); renderAll(); },
-      async setQty(id, qty, persist = true) { const p = items.find(x => x.id === id); if (p) { p.qty = Math.max(0, qty); await StrapFeatures.setItems(items, undefined, persist); renderBody(); } return p; },
+      async dropCollection(name) { const next = items.map(p => ({ ...p, collections: (p.collections || []).filter(x => x !== name) })); await StrapFeatures.setItems(next); items = StrapFeatures.items(); renderAll(); },
+      async setQty(id, qty, persist = true) { const current = items.find(x => x.id === id); if (!current) return null; const next = items.map(p => p.id === id ? { ...p, qty: Math.max(0, qty) } : p); await StrapFeatures.setItems(next, undefined, persist); items = StrapFeatures.items(); renderBody(); return items.find(x => x.id === id); },
       onChange(fn) { subs.push(fn); }
     };
   }
