@@ -102,7 +102,7 @@ async function auth(req, res, next) {
     if (!identity.emailVerified) return fail(res, 403, 'Verify your email with Neon Auth before accessing Strap.');
     let result = await pool.query(
       `SELECT u.id,u.email,u.full_name,u.photo_url,u.created_at,
-              b.id AS business_id,b.name AS business_name,b.currency,b.country,b.plan
+              b.id AS business_id,b.name AS business_name,b.currency,b.country,b.plan,b.profile AS business_profile
        FROM users u LEFT JOIN businesses b ON b.owner_id=u.id AND b.is_default=true
        WHERE u.neon_auth_user_id=$1 AND u.disabled_at IS NULL LIMIT 1`,
       [identity.id]
@@ -135,9 +135,20 @@ async function flutterwave(pathname, payload) {
   if (!response.ok || body.status === 'error') throw new Error(body.message || 'Flutterwave request failed.');
   return body;
 }
+function profileIsComplete(user) {
+  const emailPrefix = String(user.email || '').split('@')[0].toLowerCase();
+  const name = cleanText(user.full_name, 120);
+  const words = name.split(/\s+/).filter(Boolean);
+  const profile = user.business_profile && typeof user.business_profile === 'object' ? user.business_profile : {};
+  const businessName = cleanText(user.business_name, 140);
+  return words.length >= 2 && name.toLowerCase() !== emailPrefix &&
+    businessName.length >= 2 && businessName.toLowerCase() !== 'my business' &&
+    Boolean(profile.country && profile.mode && profile.branches && profile.bcountry && profile.state && profile.city && profile.street);
+}
 function publicUser(user) {
   return { id: user.id, email: user.email, name: user.full_name, photoUrl: user.photo_url || null,
-    bizname: user.business_name || '', currency: user.currency || CURRENCY, country: user.country || '' };
+    bizname: user.business_name || '', currency: user.currency || CURRENCY, country: user.country || '',
+    profile: user.business_profile || {}, profileComplete: profileIsComplete(user) };
 }
 
 app.get('/api/config', (_req, res) => res.json({
@@ -194,8 +205,8 @@ app.post('/api/auth/register', neonIdentity, asyncRoute(async (req, res) => {
     );
     await client.query('INSERT INTO account_data(user_id,data) VALUES($1,$2::jsonb) ON CONFLICT(user_id) DO NOTHING', [user.id, JSON.stringify({})]);
     await client.query('COMMIT');
-        const b = await pool.query('SELECT name,currency,country FROM businesses WHERE owner_id=$1 AND is_default=true LIMIT 1', [user.id]);
-    res.status(found.rowCount ? 200 : 201).json({ ok: true, user: publicUser({ ...user, business_name: b.rows[0]?.name, currency: b.rows[0]?.currency, country: b.rows[0]?.country }) });
+        const b = await pool.query('SELECT name,currency,country,profile FROM businesses WHERE owner_id=$1 AND is_default=true LIMIT 1', [user.id]);
+    res.status(found.rowCount ? 200 : 201).json({ ok: true, user: publicUser({ ...user, business_name: b.rows[0]?.name, currency: b.rows[0]?.currency, country: b.rows[0]?.country, business_profile: b.rows[0]?.profile || {} }) });
   } catch (error) {
     await client.query('ROLLBACK');
     if (error.code === '23505') return fail(res, 409, 'An account already exists with this email.');
@@ -205,7 +216,7 @@ app.post('/api/auth/register', neonIdentity, asyncRoute(async (req, res) => {
 app.post('/api/auth/sync', neonIdentity, asyncRoute(async (req, res) => {
   if (!req.neonIdentity.emailVerified) return fail(res, 403, 'Verify your email with Neon Auth before signing in.');
   let result = await pool.query(
-    'SELECT u.id,u.email,u.full_name,u.photo_url,u.neon_auth_user_id,u.created_at,b.name AS business_name,b.currency,b.country FROM users u LEFT JOIN businesses b ON b.owner_id=u.id AND b.is_default=true WHERE u.neon_auth_user_id=$1 LIMIT 1',
+    'SELECT u.id,u.email,u.full_name,u.photo_url,u.neon_auth_user_id,u.created_at,b.name AS business_name,b.currency,b.country,b.profile AS business_profile FROM users u LEFT JOIN businesses b ON b.owner_id=u.id AND b.is_default=true WHERE u.neon_auth_user_id=$1 LIMIT 1',
     [req.neonIdentity.id]
   );
   if (!result.rowCount) {
@@ -215,36 +226,14 @@ app.post('/api/auth/sync', neonIdentity, asyncRoute(async (req, res) => {
     );
   }
   if (!result.rowCount) {
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      const inserted = await client.query(
-        'INSERT INTO users(email,password_hash,full_name,photo_url,neon_auth_user_id) VALUES($1,$2,$3,$4,$5) RETURNING id,email,full_name,photo_url,created_at',
-        [req.neonIdentity.email, 'NEON_AUTH_ONLY', req.neonIdentity.name, req.neonIdentity.photoUrl, req.neonIdentity.id]
-      );
-      const user = inserted.rows[0];
-      await client.query(
-        "INSERT INTO businesses(owner_id,name,currency,country,plan,is_default,profile) VALUES($1,'My Business',$2,NULL,'free',true,'{}'::jsonb)",
-        [user.id, CURRENCY]
-      );
-      await client.query("INSERT INTO account_data(user_id,data) VALUES($1,'{}'::jsonb) ON CONFLICT(user_id) DO NOTHING", [user.id]);
-      await client.query('COMMIT');
-    } catch (error) {
-      await client.query('ROLLBACK');
-      if (error.code !== '23505') throw error;
-    } finally { client.release(); }
-    result = await pool.query(
-      'SELECT u.id,u.email,u.full_name,u.photo_url,u.neon_auth_user_id,u.created_at,b.name AS business_name,b.currency,b.country FROM users u LEFT JOIN businesses b ON b.owner_id=u.id AND b.is_default=true WHERE u.neon_auth_user_id=$1 OR (u.email=$2 AND u.neon_auth_user_id IS NULL) LIMIT 1',
-      [req.neonIdentity.id, req.neonIdentity.email]
-    );
+    return res.status(409).json({ ok: false, code: 'PROFILE_SETUP_REQUIRED', message: 'Your sign-in is valid. Finish setting up your Strap profile to continue.' });
   }
-  if (!result.rowCount) return fail(res, 409, 'We could not finish setting up your Strap profile. Please try again.');
   if (result.rows[0].neon_auth_user_id && result.rows[0].neon_auth_user_id !== req.neonIdentity.id) return fail(res, 409, 'This email is linked to a different Strap account.');
   if (!result.rows[0].neon_auth_user_id) {
     const linked = await pool.query('UPDATE users SET neon_auth_user_id=$2,updated_at=now() WHERE id=$1 AND neon_auth_user_id IS NULL RETURNING id', [result.rows[0].id, req.neonIdentity.id]);
     if (!linked.rowCount) return fail(res, 409, 'This email is already linked to another authentication account.');
   }
-    res.json({ ok: true, user: publicUser(result.rows[0]) });
+  res.json({ ok: true, user: publicUser(result.rows[0]) });
 }));;
 app.post('/api/storefront/subdomain/check', auth, asyncRoute(async (req, res) => {
   const name = cleanText(req.body.name, 40).toLowerCase();
@@ -272,11 +261,15 @@ app.post('/api/storefront/domain/verify', auth, asyncRoute(async (req, res) => {
 app.get('/api/auth/me', auth, asyncRoute(async (req, res) => res.json({ ok: true, user: publicUser(req.user) })));
 app.get('/api/data', auth, asyncRoute(async (req, res) => {
   const result = await pool.query('SELECT data FROM account_data WHERE user_id=$1', [req.user.id]);
-  res.json({ ok: true, data: result.rows[0]?.data || {} });
+  const data = result.rows[0]?.data || {};
+  // PIN verifier material is server-only and must never be sent to the browser.
+  const { security_pin: _privatePin, ...safeData } = data;
+  res.json({ ok: true, data: safeData });
 }));
 app.put('/api/data', auth, asyncRoute(async (req, res) => {
   const data = req.body?.data;
   if (!data || typeof data !== 'object' || Array.isArray(data)) return fail(res, 400, 'A JSON object is required.');
+  if (Object.prototype.hasOwnProperty.call(data, 'security_pin')) return fail(res, 400, 'Security PIN data can only be changed through the security endpoints.');
   await pool.query(
     `INSERT INTO account_data(user_id,data,updated_at) VALUES($1,$2::jsonb,now())
      ON CONFLICT(user_id) DO UPDATE SET data=account_data.data || EXCLUDED.data,updated_at=now()`,
@@ -284,6 +277,56 @@ app.put('/api/data', auth, asyncRoute(async (req, res) => {
   );
   res.json({ ok: true });
 }));
+
+const hashActivityPin = async (pin, salt, iterations = 210000) => {
+  const subtle = globalThis.crypto?.subtle;
+  if (!subtle) throw new Error('Secure PIN storage is not available in this runtime.');
+  const key = await subtle.importKey('raw', new TextEncoder().encode(pin), 'PBKDF2', false, ['deriveBits']);
+  const bits = await subtle.deriveBits({ name: 'PBKDF2', salt: new TextEncoder().encode(salt), iterations, hash: 'SHA-256' }, key, 256);
+  return Buffer.from(new Uint8Array(bits)).toString('hex');
+};
+const weakPins = new Set(['0000','1111','2222','3333','4444','5555','6666','7777','8888','9999','1234','4321','0123','3210','1212','2580']);
+app.post('/api/security/pin', auth, asyncRoute(async (req, res) => {
+  const pin = String(req.body?.pin || '');
+  if (!/^\d{4}$/.test(pin) || weakPins.has(pin)) return fail(res, 400, 'Choose a less predictable 4-digit PIN.');
+  const salt = crypto.randomBytes(16).toString('hex');
+  const iterations = 210000;
+  const hash = await hashActivityPin(pin, salt, iterations);
+  const verifier = { salt, hash, iterations, failCount: 0, lockedUntil: 0, updatedAt: new Date().toISOString() };
+  await pool.query(
+    "INSERT INTO account_data(user_id,data,updated_at) VALUES($1,jsonb_build_object('security_pin',$2::jsonb),now()) ON CONFLICT(user_id) DO UPDATE SET data=jsonb_set(account_data.data,'{security_pin}',$2::jsonb,true),updated_at=now()",
+    [req.user.id, JSON.stringify(verifier)]
+  );
+  res.json({ ok: true, configured: true });
+}));
+app.post('/api/security/pin/verify', auth, asyncRoute(async (req, res) => {
+  const pin = String(req.body?.pin || '');
+  if (!/^\d{4}$/.test(pin)) return fail(res, 400, 'Enter your 4-digit PIN.');
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const row = await client.query('SELECT data FROM account_data WHERE user_id=$1 FOR UPDATE', [req.user.id]);
+    const verifier = row.rows[0]?.data?.security_pin;
+    if (!verifier?.salt || !verifier?.hash) { await client.query('ROLLBACK'); return fail(res, 404, 'No activity PIN has been set for this workspace.'); }
+    const now = Date.now();
+    if (+verifier.lockedUntil > now) {
+      await client.query('ROLLBACK');
+      return res.status(429).json({ ok: false, code: 'PIN_LOCKED', message: 'Too many incorrect attempts. Try again in a few minutes.', retryAfter: Math.ceil((verifier.lockedUntil - now) / 1000) });
+    }
+    const candidate = await hashActivityPin(pin, verifier.salt, Number(verifier.iterations) || 210000);
+    const a = Buffer.from(candidate, 'hex'), b = Buffer.from(verifier.hash, 'hex');
+    let mismatch = a.length ^ b.length;
+    for (let i = 0; i < Math.max(a.length, b.length); i++) mismatch |= (a[i] || 0) ^ (b[i] || 0);
+    const valid = mismatch === 0;
+    const failCount = valid ? 0 : (Number(verifier.failCount) || 0) + 1;
+    const updated = { ...verifier, failCount, lockedUntil: !valid && failCount >= 5 ? now + 5 * 60 * 1000 : 0, lastCheckedAt: new Date(now).toISOString() };
+    await client.query("UPDATE account_data SET data=jsonb_set(data,'{security_pin}',$2::jsonb,true),updated_at=now() WHERE user_id=$1", [req.user.id, JSON.stringify(updated)]);
+    await client.query('COMMIT');
+    res.json({ ok: true, valid, locked: updated.lockedUntil > now, retryAfter: updated.lockedUntil > now ? 300 : 0 });
+  } catch (error) { await client.query('ROLLBACK'); throw error; }
+  finally { client.release(); }
+}));
+
 app.delete('/api/account', auth, asyncRoute(async (req, res) => {
   const client = await pool.connect();
   try {
