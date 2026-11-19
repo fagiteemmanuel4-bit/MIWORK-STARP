@@ -58,18 +58,11 @@ jobs:
           printf "%s\\n" "$health"
           printf "%s" "$health" | grep -q '"database":"connected"'
           curl --fail --show-error --silent "$PREVIEW_URL/" | grep -qi "<html"
-          echo "Diagnosing dashboard HTML route"
-          dashboard_status="$(curl --silent --show-error --output /tmp/strap-dashboard.html --dump-header /tmp/strap-dashboard.headers --write-out "%{http_code}" "$PREVIEW_URL/dashboard.html")"
-          echo "GET /dashboard.html -> HTTP $dashboard_status"
-          sed -n '1,12p' /tmp/strap-dashboard.headers
-          head -c 500 /tmp/strap-dashboard.html || true
-          echo
-          for path in /dashboard.html/ /dashboard /index.html /dashboard.js /features.js; do
-            code="$(curl --silent --show-error --output /tmp/strap-route-body --write-out "%{http_code}" "$PREVIEW_URL$path")"
-            echo "GET $path -> HTTP $code"
-          done
-          test "$dashboard_status" = "200"
+          echo "Checking dashboard HTML route (including Cloudflare's clean-URL redirect)"
+          dashboard_result="$(curl --location --fail --show-error --silent --output /tmp/strap-dashboard.html --write-out "%{http_code} %{url_effective}" "$PREVIEW_URL/dashboard.html")"
+          echo "Dashboard response: $dashboard_result"
           grep -q "dashboard.js?v=20261119-dashboard-fix" /tmp/strap-dashboard.html
+          grep -q "features.js?v=20261119-dashboard-fix" /tmp/strap-dashboard.html
           echo "Checking dashboard feature asset"
           curl --fail --show-error --silent "$PREVIEW_URL/features.js?v=20261119-dashboard-fix" -o /tmp/strap-features.js
           grep -q "S.notifs = Array.isArray" /tmp/strap-features.js
