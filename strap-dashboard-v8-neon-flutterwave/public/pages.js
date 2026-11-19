@@ -3,7 +3,6 @@ window.StrapPages = (() => {
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
   const U = StrapUI, ic = U.ic, esc = U.esc;
-  const store = StrapStore.state.pageData;
 
   const CFG = {
     orders: { t: 'Orders', i: 'inbox', ill: 'orders', h: 'No orders yet', p: 'New orders show up here as soon as you make a sale.' },
@@ -50,7 +49,7 @@ window.StrapPages = (() => {
   }
 
   function list(id, root, ctx) {
-    const c = CFG[id], rows = store[id] || (store[id] = []);
+    const c = CFG[id], data = StrapStore.state.pageData || (StrapStore.state.pageData = {}), rows = data[id] || (data[id] = []);
     const add = () => formSheet({ title: c.cta, fields: c.fields, cta: c.cta }, async v => {
       rows.unshift(v);
       if (id === 'gift') rows[0].push('GC-' + crypto.randomUUID().slice(0, 8).toUpperCase());
