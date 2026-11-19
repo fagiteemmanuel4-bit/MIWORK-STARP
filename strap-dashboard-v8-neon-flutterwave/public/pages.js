@@ -1,11 +1,9 @@
-/* Strap – every sidebar page except Products: Orders, Collections, Inventory, Purchase orders, Transfers,
-   Gift cards, Customers, Growth, Online store, MCP, Settings, plus today's sales, sales history and the new-sale page.
-   Lists are kept in memory for now – swap `store` for real API calls later. */
+/* Strap – dashboard pages backed by the authenticated Neon account document. */
 window.StrapPages = (() => {
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
   const U = StrapUI, ic = U.ic, esc = U.esc;
-  const store = {};
+  const store = StrapStore.state.pageData;
 
   const CFG = {
     orders: { t: 'Orders', i: 'inbox', ill: 'orders', h: 'No orders yet', p: 'New orders show up here as soon as you make a sale.' },
@@ -17,7 +15,7 @@ window.StrapPages = (() => {
       fields: [['From', 'text', 'e.g. Warehouse'], ['To', 'text', 'e.g. Shop location'], ['Notes', 'text', 'Optional']] },
     gift: { t: 'Gift cards', i: 'gift', ill: 'gift', h: 'Sell gift cards', p: 'Create gift cards customers can buy or receive, and redeem them at checkout.', cta: 'Create gift card',
       fields: [['Value', 'number', '5000'], ['Customer email', 'email', 'Optional']],
-      fmt: v => ({ t: `${ctxRef.money(+v[0] || 0)} gift card`, s: [genCode(), v[1]].filter(Boolean).join(' · ') }) },
+      fmt: v => ({ t: `${ctxRef.money(+v[0] || 0)} gift card`, s: [v[2] || genCode(), v[1]].filter(Boolean).join(' · ') }) },
     customers: { t: 'Customers', i: 'users', ill: 'customers', h: 'No customers yet', p: 'Add customers to keep track of who buys from you.', cta: 'Add customer',
       fields: [['Full name', 'text', 'e.g. Ada Okafor'], ['Email', 'email', 'Optional'], ['Phone', 'tel', 'Optional']] }
   };
@@ -37,12 +35,15 @@ window.StrapPages = (() => {
     document.body.appendChild(wrap); document.body.classList.add('pm-open'); void wrap.offsetWidth; wrap.classList.add('on');
     const close = () => { wrap.classList.remove('on'); document.body.classList.remove('pm-open'); setTimeout(() => wrap.remove(), 380); };
     const first = $('input', wrap); setTimeout(() => first && first.focus(), 350);
-    wrap.addEventListener('click', e => {
+    wrap.addEventListener('click', async e => {
       if (e.target.closest('.pm-scrim') || e.target.closest('[data-c]')) return close();
       if (e.target.closest('[data-s]')) {
-        const v = $$('input', wrap).map(i => i.value.trim());
+        const btn = e.target.closest('[data-s]'), v = $('input', wrap).map(i => i.value.trim());
         if (!v[0]) { const fl = first.closest('.pm-fl'); fl.classList.add('bad'); setTimeout(() => fl.classList.remove('bad'), 900); return; }
-        close(); onSave(v);
+        if (btn.disabled) return;
+        btn.disabled = true; const idle = btn.textContent; btn.textContent = 'Saving…';
+        try { await onSave(v); close(); }
+        catch (error) { btn.disabled = false; btn.textContent = idle; ctxRef?.toast?.(error.message || 'Could not save. Check your connection and try again.'); }
       }
     });
     wrap.addEventListener('keydown', e => { if (e.key === 'Enter') $('[data-s]', wrap).click(); });
@@ -50,7 +51,12 @@ window.StrapPages = (() => {
 
   function list(id, root, ctx) {
     const c = CFG[id], rows = store[id] || (store[id] = []);
-    const add = () => formSheet({ title: c.cta, fields: c.fields, cta: c.cta }, v => { rows.unshift(v); draw(); ctx.toast('Added'); });
+    const add = () => formSheet({ title: c.cta, fields: c.fields, cta: c.cta }, async v => {
+      rows.unshift(v);
+      if (id === 'gift') rows[0].push('GC-' + crypto.randomUUID().slice(0, 8).toUpperCase());
+      await StrapStore.save();
+      draw(); ctx.toast('Saved to your workspace');
+    });
     function draw() {
       const cta = c.cta ? `<button type="button" class="pm-add" data-add>${ic('plus', 20, 2.2)} ${c.cta}</button>` : '';
       root.innerHTML = head(c.i, c.t, rows.length && c.cta ? `<button type="button" class="pm-add sm" data-add>Add</button>` : '') +
@@ -72,7 +78,7 @@ window.StrapPages = (() => {
     const plural = k => `${k} product${k === 1 ? '' : 's'}`;
     const add = () => formSheet({ title: 'Create collection', fields: CFG.collections.fields, cta: 'Create collection' }, v => {
       if (CS.find(v[0])) return ctx.toast('You already have a collection with that name');
-      CS.add(v[0], v[1] || ''); draw(); ctx.toast('Collection created');
+      CS.add(v[0], v[1] || ''); await StrapStore.save(); draw(); ctx.toast('Collection created');
     });
     function draw() {
       const rows = CS.all(), cta = `<button type="button" class="pm-add" data-add>${ic('plus', 20, 2.2)} Create collection</button>`;
@@ -90,7 +96,7 @@ window.StrapPages = (() => {
         title: c.name, multi: true, value: P.inCollection(c.name), done: 'Save', search: items.length > 8,
         options: items.map(p => ({ v: p.id, l: p.title, s: p.category || (p.status === 'draft' ? 'Draft' : 'Active'), img: p.image || '', ic: p.image ? '' : 'inventory', tone: 'n' }))
       });
-      if (!res) return; P.setCollection(c.name, res); draw(); ctx.toast('Collection updated');
+      if (!res) return; await P.setCollection(c.name, res); draw(); ctx.toast('Collection updated');
     }
     root.addEventListener('click', async e => {
       if (e.target.closest('[data-add]')) return add();
@@ -98,7 +104,7 @@ window.StrapPages = (() => {
       if (d) {
         const c = CS.all().find(x => x.id === d.dataset.del); if (!c) return;
         const ok = await K.confirm({ title: 'Delete this collection?', body: `<b>${esc(c.name)}</b> will be removed. Your products stay in your catalogue.`, ok: 'Delete', cancel: 'Keep it', icon: 'trash', danger: true });
-        if (ok) { CS.remove(c.id); P.dropCollection(c.name); draw(); ctx.toast('Collection deleted'); }
+        if (ok) { CS.remove(c.id); await P.dropCollection(c.name); await StrapStore.save(); draw(); ctx.toast('Collection deleted'); }
         return;
       }
       const r = e.target.closest('.pg-col'); if (r) { const c = CS.all().find(x => x.id === r.dataset.id); if (c) manage(c); }
@@ -121,7 +127,7 @@ window.StrapPages = (() => {
       if (e.target.closest('[data-addp]')) { ctx.go('products'); setTimeout(() => P.openAdd(), 300); return; }
       const b = e.target.closest('[data-q]'); if (!b) return;
       const id = b.closest('.pg-row').dataset.id, p = P.items().find(x => x.id === id); if (!p) return;
-      P.setQty(id, p.qty + +b.dataset.q); draw();
+      const btn = b; btn.disabled = true; try { await P.setQty(id, p.qty + +b.dataset.q); draw(); } catch (error) { ctx.toast(error.message || 'Stock could not be saved.'); } finally { btn.disabled = false; }
     });
     draw(); return { onShow: draw };
   }
