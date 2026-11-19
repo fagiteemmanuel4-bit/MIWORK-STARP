@@ -7,14 +7,34 @@ window.StrapFeatures = (() => {
   const KEY = 'strap.f1';
   const LIM = { free: { branches: 2, staff: 3, products: 200, imports: 8 }, premium: { branches: 10, staff: 50, products: 1e6, imports: 1e6 } };
   const mkey = () => new Date().toISOString().slice(0, 7);
-  const defaults = () => ({ plan: 'free', branches: [{ id: 'b0', name: 'Main branch' }], active: 'b0', staff: [], imports: { m: mkey(), n: 0 }, theme: 'light', twofa: { on: false, secret: '' },
-    backup: { email: '', phone: '' }, mcp: [], transfers: [], dismissed: [], itemsByBranch: {} });
+  const defaults = () => ({
+    plan: 'free', branches: [{ id: 'b0', name: 'Main branch' }], active: 'b0', staff: [],
+    imports: { m: mkey(), n: 0 }, theme: 'light', twofa: { on: false, secret: '' },
+    backup: { email: '', phone: '' }, account: { status: 'active' }, notifs: [], lowSeen: [],
+    reports: [], seeded: false, pushAsked: false, mcp: [], transfers: [], dismissed: [], itemsByBranch: {}
+  });
   let S = defaults();
   const save = () => { if (window.StrapAPI) window.StrapAPI.data.set('features', S).catch(e => console.error('Could not save feature data:', e)); };
   async function hydrate() {
     const remote = window.StrapAPI?.data.get('features');
-    if (remote && typeof remote === 'object') Object.assign(S, remote);
-    S.itemsByBranch ||= {};
+    if (remote && typeof remote === 'object' && !Array.isArray(remote)) Object.assign(S, remote);
+
+    // Old and brand-new accounts may have a partial or empty features document.
+    // Normalize the collections used during the first dashboard render before
+    // notifications, account gating, and the home checklist read them.
+    S.account = Object.assign({ status: 'active' }, S.account && typeof S.account === 'object' ? S.account : {});
+    S.notifs = Array.isArray(S.notifs) ? S.notifs : [];
+    S.lowSeen = Array.isArray(S.lowSeen) ? S.lowSeen : [];
+    S.reports = Array.isArray(S.reports) ? S.reports : [];
+    S.dismissed = Array.isArray(S.dismissed) ? S.dismissed : [];
+    S.staff = Array.isArray(S.staff) ? S.staff : [];
+    S.branches = Array.isArray(S.branches) && S.branches.length ? S.branches : defaults().branches;
+    if (!S.branches.some(b => b.id === S.active)) S.active = S.branches[0].id;
+    S.itemsByBranch = S.itemsByBranch && typeof S.itemsByBranch === 'object' && !Array.isArray(S.itemsByBranch) ? S.itemsByBranch : {};
+    S.twofa = Object.assign({ on: false, secret: '' }, S.twofa && typeof S.twofa === 'object' ? S.twofa : {});
+    S.backup = Object.assign({ email: '', phone: '' }, S.backup && typeof S.backup === 'object' ? S.backup : {});
+    S.imports = Object.assign({ m: mkey(), n: 0 }, S.imports && typeof S.imports === 'object' ? S.imports : {});
+    S.plan = S.plan === 'premium' ? 'premium' : 'free';
     applyTheme();
     return S;
   }
