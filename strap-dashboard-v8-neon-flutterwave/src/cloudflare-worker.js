@@ -1,8 +1,12 @@
 import { createServer } from "node:http";
 import { handleAsNodeRequest } from "cloudflare:node";
 import { handleNeonAuthEmailWebhook } from "../email.js";
+import pg from "pg";
+
+const { Client } = pg;
 
 let appHandlerPromise;
+let withDatabaseClient;
 
 async function getAppHandler(env) {
   if (!appHandlerPromise) {
@@ -12,7 +16,8 @@ async function getAppHandler(env) {
       APP_URL: env.APP_URL || "https://strap-preview.strap-preview.workers.dev",
       STRAP_WORKERS: "true"
     };
-    appHandlerPromise = import("../server.mjs").then(({ default: app }) => {
+    appHandlerPromise = import("../server.mjs").then(({ default: app, withDatabaseClient: runWithDatabaseClient }) => {
+      withDatabaseClient = runWithDatabaseClient;
       const server = createServer(app);
       server.listen(8787);
       return true;
@@ -115,7 +120,18 @@ export default {
         });
       }
       await getAppHandler(env);
-      return handleAsNodeRequest(8787, request);
+
+      // Create the pg client inside this Worker invocation. Hyperdrive already
+      // pools origin connections; a module-global pg Pool can retain stale
+      // sockets between Worker requests and intermittently hang dashboard reads.
+      const dbClient = new Client({
+        connectionString: env.HYPERDRIVE.connectionString,
+        connectionTimeoutMillis: 8000,
+        query_timeout: 12000,
+        ssl: { rejectUnauthorized: false }
+      });
+      await dbClient.connect();
+      return await withDatabaseClient(dbClient, () => handleAsNodeRequest(8787, request));
     } catch (error) {
       console.error("Strap Worker request failed:", error);
       return Response.json({ ok: false, message: env.STRAP_DEBUG === "true" ? String(error?.stack || error?.message || error) : "Strap is temporarily unavailable. Please try again." }, { status: 503 });

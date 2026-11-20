@@ -13,13 +13,32 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ENV = globalThis.STRAP_ENV || process.env;
 const app = express();
 const { Pool } = pg;
-const pool = new Pool({
+import { AsyncLocalStorage } from 'node:async_hooks';
+
+// Cloudflare Workers must not reuse a driver-level Pool across invocations.
+// Hyperdrive owns the shared upstream pool; each Worker request supplies its
+// own short-lived pg Client through this async context. Local Node deployments
+// retain the conventional Pool fallback.
+const databaseContext = new AsyncLocalStorage();
+const localPool = new Pool({
   connectionString: ENV.HYPERDRIVE?.connectionString || ENV.DATABASE_URL,
   ssl: ENV.DATABASE_SSL === 'false' ? false : { rejectUnauthorized: false },
   max: Number(ENV.DB_POOL_MAX || 10),
   idleTimeoutMillis: 30_000,
   connectionTimeoutMillis: 10_000
 });
+const pool = {
+  query(...args) {
+    const client = databaseContext.getStore();
+    return client ? client.query(...args) : localPool.query(...args);
+  },
+  async connect() {
+    const client = databaseContext.getStore();
+    if (client) return { query: client.query.bind(client), release() {} };
+    return localPool.connect();
+  }
+};
+export const withDatabaseClient = (client, callback) => databaseContext.run(client, callback);
 const required = ['DATABASE_URL', 'APP_URL'];
 for (const key of required) if (!ENV[key] || ENV[key].includes('replace_me')) {
   console.warn(`[config] ${key} is not configured; related requests will fail until .env is completed.`);
