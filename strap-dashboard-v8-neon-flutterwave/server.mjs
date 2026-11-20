@@ -252,9 +252,21 @@ app.post('/api/auth/register', neonIdentity, asyncRoute(async (req, res) => {
       [user.id, bizname, cleanText(req.body.currency || CURRENCY, 8), cleanText(req.body.bcountry || req.body.country, 80), JSON.stringify(profile)]
     );
     await client.query('INSERT INTO account_data(user_id,data) VALUES($1,$2::jsonb) ON CONFLICT(user_id) DO NOTHING', [user.id, JSON.stringify({})]);
+    // Read the profile before commit so a response-building database error
+    // cannot leave a created account while the browser believes registration failed.
+    const b = await client.query(
+      'SELECT name,currency,country,profile FROM businesses WHERE owner_id=$1 AND is_default=true LIMIT 1',
+      [user.id]
+    );
+    const responseUser = publicUser({
+      ...user,
+      business_name: b.rows[0]?.name,
+      currency: b.rows[0]?.currency,
+      country: b.rows[0]?.country,
+      business_profile: b.rows[0]?.profile || {}
+    });
     await client.query('COMMIT');
-        const b = await pool.query('SELECT name,currency,country,profile FROM businesses WHERE owner_id=$1 AND is_default=true LIMIT 1', [user.id]);
-    res.status(found.rowCount ? 200 : 201).json({ ok: true, user: publicUser({ ...user, business_name: b.rows[0]?.name, currency: b.rows[0]?.currency, country: b.rows[0]?.country, business_profile: b.rows[0]?.profile || {} }) });
+    res.status(found.rowCount ? 200 : 201).json({ ok: true, user: responseUser });
   } catch (error) {
     await client.query('ROLLBACK');
     if (error.code === '23505') return fail(res, 409, 'An account already exists with this email.');

@@ -165,6 +165,21 @@
         window.StrapAPI.setUser(result.user);
         return { ok: true, user: result.user };
       } catch (e) {
+        // The response may be lost after the registration transaction commits.
+        // Resolve that ambiguous case through account sync before removing media
+        // or asking the user to submit the setup form again.
+        try {
+          const synced = await window.StrapAPI.request('/api/auth/sync', {
+            method: 'POST', body: '{}'
+          });
+          if (synced?.user) {
+            window.StrapAPI.setUser(synced.user);
+            return { ok: true, user: synced.user };
+          }
+        } catch (syncError) {
+          console.warn('Strap could not confirm registration after the initial request failed:', syncError.message);
+        }
+
         if (uploadedProfileKey) {
           try {
             await window.StrapAPI.request('/api/media/profile/object', {

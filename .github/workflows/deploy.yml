@@ -59,11 +59,12 @@ jobs:
           printf "%s" "$health" | grep -q '"database":"connected"'
           curl --fail --show-error --silent "$PREVIEW_URL/" -o /tmp/strap-root.html
           grep -qi "<html" /tmp/strap-root.html
+          grep -q 'script.js?v=20261120-release2' /tmp/strap-root.html
           echo "Checking dashboard HTML route (including Cloudflare's clean-URL redirect)"
           dashboard_result="$(curl --fail --show-error --silent --output /tmp/strap-dashboard.html --write-out "%{http_code} %{url_effective}" "$PREVIEW_URL/dashboard")"
           echo "Dashboard response: $dashboard_result"
           grep -q 'src="/dashboard.js' /tmp/strap-dashboard.html
-          grep -q 'src="/features.js' /tmp/strap-dashboard.html
+          grep -q 'src="/features.js?v=20261120-release2' /tmp/strap-dashboard.html
           echo "Checking dashboard feature asset"
           curl --fail --show-error --silent "$PREVIEW_URL/features.js" -o /tmp/strap-features.js
           grep -q "S.notifs = Array.isArray" /tmp/strap-features.js
@@ -79,6 +80,7 @@ jobs:
           grep -q '"emailProvider":"Neon Auth"' /tmp/strap-api-config.json
           curl --fail --show-error --silent "$PREVIEW_URL/script.js" -o /tmp/strap-script.js
           grep -q '0x4AAAAAAGIY0URD6s_Mg1m1' /tmp/strap-script.js
+          grep -q '/api/media/profile/presign' /tmp/strap-script.js
           status="$(curl --silent --output /dev/null --write-out "%{http_code}" -X POST -H 'Content-Type: application/json' -d '{}' "$PREVIEW_URL/api/auth/register")"
           test "$status" = "403"
           status="$(curl --silent --output /dev/null --write-out "%{http_code}" "$PREVIEW_URL/api/auth/me")"
