@@ -79,6 +79,14 @@ export default {
       }
     }
 
+    // Route the canonical dashboard URL to its actual HTML asset. This avoids
+    // depending on implicit clean-URL handling for /dashboard on mobile browsers.
+    if (url.pathname === "/dashboard" || url.pathname === "/dashboard/") {
+      const dashboardUrl = new URL(request.url);
+      dashboardUrl.pathname = "/dashboard.html";
+      return env.ASSETS.fetch(new Request(dashboardUrl, request));
+    }
+
     const dynamicPaths = url.pathname.startsWith("/api/") ||
       url.pathname.startsWith("/store/") ||
       url.pathname === "/robots.txt" ||
