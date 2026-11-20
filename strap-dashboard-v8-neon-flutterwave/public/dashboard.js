@@ -33,7 +33,10 @@
         }
       }
       if (!window.StrapAPI.user) { location.replace('/?signin=1'); return null; }
-      if (window.StrapAPI.user.profileComplete === false) { location.replace('/?complete=1'); return null; }
+      if (window.StrapAPI.user.profileComplete === false && (window.StrapAPI.user.status || 'active') === 'active') {
+        location.replace('/?complete=1');
+        return null;
+      }
 
       D = window.StrapAPI.user;
       await Promise.all([StrapStore.hydrate(), StrapFeatures.hydrate()]);

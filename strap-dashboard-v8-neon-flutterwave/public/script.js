@@ -29,6 +29,9 @@
         }
 
         if (synced?.user) hydrateDraftFromUser(synced.user);
+        if (synced?.user && (synced.user.status || 'active') !== 'active') {
+          return { ok: true, redirectToDashboard: true };
+        }
         if (!synced?.user || synced.user.profileComplete === false) {
           return { ok: true, resumeSetupAt: firstMissingSetupStep() };
         }
@@ -622,7 +625,9 @@
         await window.StrapAPI.ready;
         await window.StrapAPI.refresh();
         if (!window.StrapAPI.user) throw new Error('Sign in to finish setting up your workspace.');
-        if (window.StrapAPI.user.profileComplete === false) {
+        if ((window.StrapAPI.user.status || 'active') !== 'active') {
+          location.replace('/dashboard');
+        } else if (window.StrapAPI.user.profileComplete === false) {
           hydrateDraftFromUser(window.StrapAPI.user);
           hist = [];
           go(firstMissingSetupStep());

@@ -84,6 +84,14 @@ export default {
       }
     }
 
+    // Never expose application source, configuration, repository metadata or
+    // deployment files through the static asset binding. Express has a matching
+    // guard for local Node deployments; the Worker must enforce it before ASSETS.
+    if (/(^|\/)(?:server\\.mjs|package\\.json|README\\.md|\\.env(?:\\..*)?|\\.git)(?:\/|$)/i.test(url.pathname) ||
+        /\\.(?:sql|md)$/i.test(url.pathname)) {
+      return new Response(null, { status: 404, headers: { "Cache-Control": "no-store" } });
+    }
+
     // Route the canonical dashboard URL to its actual HTML asset. This avoids
     // depending on implicit clean-URL handling for /dashboard on mobile browsers.
     if (url.pathname === "/dashboard" || url.pathname === "/dashboard/") {
