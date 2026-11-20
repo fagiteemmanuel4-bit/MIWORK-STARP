@@ -35,18 +35,25 @@
   };
   const request = async (url, options = {}) => {
     let authToken = null;
+    const publicRequest = ['/api/config', '/api/auth/verification/send', '/api/auth/verification/verify'].includes(url);
     if (url !== '/api/config') {
       try { authToken = await getAuthToken(); }
       catch (error) {
-        if (!['/api/auth/verification/send', '/api/auth/verification/verify'].includes(url)) throw error;
+        if (!publicRequest) throw error;
         console.warn('Neon Auth token not needed for this public request:', error.message);
       }
     }
+    if (!authToken && !publicRequest) {
+      throw new Error('Your Neon Auth session is missing or expired. Please sign in again.');
+    }
     const response = await fetch(url, {
       ...options,
+      cache: 'no-store',
       credentials: 'same-origin',
       headers: {
         'Content-Type': 'application/json',
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache',
         ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
         ...(options.headers || {})
       }

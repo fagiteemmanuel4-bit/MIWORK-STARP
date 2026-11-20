@@ -58,28 +58,36 @@
 </div>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
-<script src="api-client.js?v=20261119-jwt-fix"></script>
+<script src="api-client.js?v=20261120-session-fix"></script>
 <script type="module">
 import { createAuthClient } from "https://esm.sh/@neondatabase/auth@0.7.0-beta?bundle";
 const authClient = createAuthClient("https://ep-old-night-bdy63bd2.neonauth.c-8.us-east-2.aws.neon.tech/neondb/auth");
 window.StrapNeonAuth = {
   client: authClient,
   async getToken() {
+    let tokenError = null;
     try {
-      const { data, error } = await authClient.token();
-      if (error) throw error;
-      const token = data?.token;
-      if (!token) throw new Error("Neon Auth did not return a session JWT.");
-      return token;
+      const result = await authClient.token();
+      if (result?.error) throw result.error;
+      const token = result?.data?.token;
+      if (token) return token;
     } catch (error) {
-      console.error("Neon Auth session token unavailable:", error);
-      throw error;
+      tokenError = error;
     }
+    try {
+      const sessionResult = await authClient.getSession();
+      if (sessionResult?.error) throw sessionResult.error;
+      const sessionToken = sessionResult?.data?.session?.token;
+      if (sessionToken) return sessionToken;
+    } catch (error) {
+      tokenError ||= error;
+    }
+    throw tokenError || new Error("Neon Auth has no active session JWT. Please sign in again.");
   }
 };
 window.dispatchEvent(new Event("strap-neon-auth-ready"));
 </script>
 <script src="picker.js"></script>
-<script src="script.js?v=20261119-jwt-fix"></script>
+<script src="script.js?v=20261120-session-fix"></script>
 </body>
 </html>

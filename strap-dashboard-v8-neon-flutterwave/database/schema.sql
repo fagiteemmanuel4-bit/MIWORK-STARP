@@ -7,12 +7,17 @@ CREATE TABLE IF NOT EXISTS users (
   email text NOT NULL UNIQUE,
   password_hash text NOT NULL,
   full_name text NOT NULL,
+  name text NOT NULL,
   photo_url text,
   neon_auth_user_id text UNIQUE,
   disabled_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE users ADD COLUMN IF NOT EXISTS name text;
+UPDATE users SET name = COALESCE(NULLIF(BTRIM(name), ''), full_name);
+ALTER TABLE users ALTER COLUMN name SET NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS users_email_lower_uidx ON users (lower(email));
 
 CREATE TABLE IF NOT EXISTS businesses (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

@@ -53,6 +53,12 @@ let neonJwks;
 
 app.set('trust proxy', Number(ENV.TRUST_PROXY || 1));
 app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
+app.use('/api', (_req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  next();
+});
 // Workers-compatible JSON body parser: avoids body-parser/iconv-lite's Node stream shim.
 app.use((req, res, next) => {
   if (req.method === 'GET' || req.method === 'HEAD') { req.body = {}; return next(); }
@@ -98,7 +104,11 @@ async function getNeonIdentity(req) {
   if (!token || !NEON_AUTH_JWKS_URL || !NEON_AUTH_BASE_URL) return null;
   try {
     neonJwks ||= createRemoteJWKSet(new URL(NEON_AUTH_JWKS_URL));
-    const { payload } = await jwtVerify(token, neonJwks, { issuer: new URL(NEON_AUTH_BASE_URL).origin });
+    const { payload } = await jwtVerify(token, neonJwks, {
+      algorithms: ['EdDSA'],
+      issuer: new URL(NEON_AUTH_BASE_URL).origin,
+      audience: new URL(NEON_AUTH_BASE_URL).origin
+    });
     if (!payload.sub || !payload.email) return null;
     return { id: String(payload.sub), email: emailNorm(payload.email), name: cleanText(payload.name || payload.email.split('@')[0], 120), photoUrl: typeof payload.picture === 'string' ? payload.picture : null, emailVerified: payload.email_verified === true || payload.emailVerified === true };
   } catch (error) {
@@ -131,11 +141,11 @@ async function auth(req, res, next) {
         `SELECT u.id,u.email,u.full_name,u.photo_url,u.created_at,
                 b.id AS business_id,b.name AS business_name,b.currency,b.country,b.plan,b.profile AS business_profile
          FROM users u LEFT JOIN businesses b ON b.owner_id=u.id AND b.is_default=true
-         WHERE u.email=$1 AND u.neon_auth_user_id IS NULL AND u.disabled_at IS NULL LIMIT 1`,
+         WHERE lower(u.email)=$1 AND u.neon_auth_user_id IS NULL AND u.disabled_at IS NULL LIMIT 1`,
         [identity.email]
       );
       if (result.rowCount) {
-        const linked = await pool.query('UPDATE users SET neon_auth_user_id=$2,updated_at=now() WHERE id=$1 AND neon_auth_user_id IS NULL RETURNING id', [result.rows[0].id, identity.id]);
+        const linked = await pool.query('UPDATE users SET email=lower(email),neon_auth_user_id=$2,updated_at=now() WHERE id=$1 AND neon_auth_user_id IS NULL RETURNING id', [result.rows[0].id, identity.id]);
         if (!linked.rowCount) return fail(res, 409, 'This email is already linked to another authentication account.');
       }
     }
@@ -192,7 +202,7 @@ app.post('/api/auth/register', neonIdentity, asyncRoute(async (req, res) => {
   try {
     await client.query('BEGIN');
     let found = await client.query('SELECT id,email,full_name,photo_url,neon_auth_user_id FROM users WHERE neon_auth_user_id=$1 LIMIT 1', [req.neonIdentity.id]);
-    if (!found.rowCount) found = await client.query('SELECT id,email,full_name,photo_url,neon_auth_user_id FROM users WHERE email=$1 LIMIT 1', [email]);
+    if (!found.rowCount) found = await client.query('SELECT id,email,full_name,photo_url,neon_auth_user_id FROM users WHERE lower(email)=$1 LIMIT 1', [email]);
     if (found.rowCount && found.rows[0].neon_auth_user_id && found.rows[0].neon_auth_user_id !== req.neonIdentity.id) {
       await client.query('ROLLBACK');
       return fail(res, 409, 'This email is already linked to another authentication account. Sign in with the original account.');
@@ -200,14 +210,14 @@ app.post('/api/auth/register', neonIdentity, asyncRoute(async (req, res) => {
     let user;
     if (found.rowCount) {
       const updated = await client.query(
-        'UPDATE users SET neon_auth_user_id=$2,full_name=$3,photo_url=COALESCE($4,photo_url),updated_at=now() WHERE id=$1 RETURNING id,email,full_name,photo_url,created_at',
-        [found.rows[0].id, req.neonIdentity.id, name, req.body.photoUrl || null]
+        'UPDATE users SET email=$5,neon_auth_user_id=$2,full_name=$3,name=$3,photo_url=COALESCE($4,photo_url),updated_at=now() WHERE id=$1 RETURNING id,email,full_name,photo_url,created_at',
+        [found.rows[0].id, req.neonIdentity.id, name, req.body.photoUrl || null, email]
       );
       user = updated.rows[0];
     } else {
       const passwordHash = 'NEON_AUTH_ONLY';
       const inserted = await client.query(
-        'INSERT INTO users(email,password_hash,full_name,photo_url,neon_auth_user_id) VALUES($1,$2,$3,$4,$5) RETURNING id,email,full_name,photo_url,created_at',
+        'INSERT INTO users(email,password_hash,full_name,name,photo_url,neon_auth_user_id) VALUES($1,$2,$3,$3,$4,$5) RETURNING id,email,full_name,photo_url,created_at',
         [email, passwordHash, name, req.body.photoUrl || null, req.neonIdentity.id]
       );
       user = inserted.rows[0];
@@ -240,7 +250,7 @@ app.post('/api/auth/sync', neonIdentity, asyncRoute(async (req, res) => {
   );
   if (!result.rowCount) {
     result = await pool.query(
-      'SELECT u.id,u.email,u.full_name,u.photo_url,u.neon_auth_user_id,u.created_at,b.name AS business_name,b.currency,b.country,b.profile AS business_profile FROM users u LEFT JOIN businesses b ON b.owner_id=u.id AND b.is_default=true WHERE u.email=$1 LIMIT 1',
+      'SELECT u.id,u.email,u.full_name,u.photo_url,u.neon_auth_user_id,u.created_at,b.name AS business_name,b.currency,b.country,b.profile AS business_profile FROM users u LEFT JOIN businesses b ON b.owner_id=u.id AND b.is_default=true WHERE lower(u.email)=$1 LIMIT 1',
       [req.neonIdentity.email]
     );
   }
@@ -249,7 +259,7 @@ app.post('/api/auth/sync', neonIdentity, asyncRoute(async (req, res) => {
   }
   if (result.rows[0].neon_auth_user_id && result.rows[0].neon_auth_user_id !== req.neonIdentity.id) return fail(res, 409, 'This email is linked to a different Strap account.');
   if (!result.rows[0].neon_auth_user_id) {
-    const linked = await pool.query('UPDATE users SET neon_auth_user_id=$2,updated_at=now() WHERE id=$1 AND neon_auth_user_id IS NULL RETURNING id', [result.rows[0].id, req.neonIdentity.id]);
+    const linked = await pool.query('UPDATE users SET email=lower(email),neon_auth_user_id=$2,updated_at=now() WHERE id=$1 AND neon_auth_user_id IS NULL RETURNING id', [result.rows[0].id, req.neonIdentity.id]);
     if (!linked.rowCount) return fail(res, 409, 'This email is already linked to another authentication account.');
   }
   res.json({ ok: true, user: publicUser(result.rows[0]) });
