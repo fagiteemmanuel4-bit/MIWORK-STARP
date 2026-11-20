@@ -45,7 +45,26 @@ window.StrapSettings = (() => {
     }
 
     /* ================= receipt designer ================= */
-    const commit = () => { S.setReceiptRaw(tpl); saved = Date.now(); const st = $('#st-saved', root); if (st) st.textContent = 'Saved'; paintPrev(); };
+    let receiptSaveRevision = 0;
+    const commit = () => {
+      const revision = ++receiptSaveRevision;
+      const status = $('#st-saved', root);
+      if (status) status.textContent = 'Saving…';
+      paintPrev();
+      return S.setReceiptRaw(tpl).then(() => {
+        if (revision === receiptSaveRevision) {
+          saved = Date.now();
+          const current = $('#st-saved', root);
+          if (current) current.textContent = 'Saved';
+        }
+      }).catch(error => {
+        if (revision === receiptSaveRevision) {
+          const current = $('#st-saved', root);
+          if (current) current.textContent = 'Not saved';
+        }
+        ctx.toast(error.message || 'Receipt settings could not be saved.');
+      });
+    };
     const paintPrev = () => { const p = $('#st-prev', root); if (p) p.innerHTML = R.render(tpl, null, money); };
     function drawReceipt() {
       root.innerHTML = hdr('Sales receipt', 'receipt', true) + `
@@ -170,7 +189,16 @@ window.StrapSettings = (() => {
       if (t.closest('[data-name]')) {
         const sh = sheet({ title: 'Store name', body: `<label class="pm-fl"><span>Store name</span><input id="st-nm" type="text" value="${esc(ctx.store.bizname || '')}" maxlength="60" autocomplete="off"></label><button type="button" class="pm-add wide" data-ok>Save</button>` });
         const i = $('#st-nm', sh.body); setTimeout(() => i.focus(), 350);
-        const ok = () => { const v = i.value.trim(); if (!v) return fx('err'); ctx.rename(v); tpl = R.load(v); if (!S.getReceiptRaw()) tpl.header.businessName = v; sh.close(); drawRoot(); ctx.toast('Store name updated'); };
+        const ok = async () => {
+          const v = i.value.trim();
+          if (!v) return fx('err');
+          try {
+            await ctx.rename(v);
+            tpl = R.load(v);
+            if (!S.getReceiptRaw()) tpl.header.businessName = v;
+            sh.close(); drawRoot(); ctx.toast('Store name updated');
+          } catch (error) { ctx.toast(error.message || 'Store name could not be saved.'); }
+        };
         sh.body.addEventListener('click', ev => { if (ev.target.closest('[data-ok]')) ok(); }); sh.body.addEventListener('keydown', ev => { if (ev.key === 'Enter') ok(); });
         return;
       }
@@ -179,7 +207,19 @@ window.StrapSettings = (() => {
         const key = sbtn.dataset.sw, on = !sbtn.classList.contains('on');
         sbtn.classList.toggle('on', on); sbtn.setAttribute('aria-checked', on);
         if (view === 'receipt') { set(tpl, key, on); return commit(); }
-        S.prefs[key] = on; S.save(); if (key === 'sound' && on) fx('ok'); if (key === 'vibrate' && on) StrapKit.buzz('ok'); return;
+        const previous = !on;
+        S.prefs[key] = on;
+        try { await S.save(); }
+        catch (error) {
+          S.prefs[key] = previous;
+          sbtn.classList.toggle('on', previous);
+          sbtn.setAttribute('aria-checked', String(previous));
+          ctx.toast(error.message || 'Preference could not be saved.');
+          return;
+        }
+        if (key === 'sound' && on) fx('ok');
+        if (key === 'vibrate' && on) StrapKit.buzz('ok');
+        return;
       }
       // receipt designer
       if (t.closest('[data-full]')) { return sheet({ title: 'Receipt preview', cls: 'sx-rsheet', body: `<div class="sx-rcw">${R.render(tpl, null, money)}</div><button type="button" class="pm-add wide" data-kc>Done</button>` }); }

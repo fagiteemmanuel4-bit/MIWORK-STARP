@@ -262,6 +262,7 @@ app.post('/api/auth/sync', neonIdentity, asyncRoute(async (req, res) => {
     const linked = await pool.query('UPDATE users SET email=lower(email),neon_auth_user_id=$2,updated_at=now() WHERE id=$1 AND neon_auth_user_id IS NULL RETURNING id', [result.rows[0].id, req.neonIdentity.id]);
     if (!linked.rowCount) return fail(res, 409, 'This email is already linked to another authentication account.');
   }
+  await pool.query('INSERT INTO account_data(user_id,data) VALUES($1,$2::jsonb) ON CONFLICT(user_id) DO NOTHING', [result.rows[0].id, JSON.stringify({})]);
   res.json({ ok: true, user: publicUser(result.rows[0]) });
 }));;
 app.post('/api/storefront/subdomain/check', auth, asyncRoute(async (req, res) => {

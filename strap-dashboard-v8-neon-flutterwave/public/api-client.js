@@ -4,6 +4,7 @@
   let authReadyPromise;
   const waitForAuth = () => {
     if (window.StrapNeonAuth?.client) return Promise.resolve(window.StrapNeonAuth);
+    if (window.StrapNeonAuthError) return Promise.reject(window.StrapNeonAuthError);
     if (!authReadyPromise) {
       authReadyPromise = new Promise((resolve, reject) => {
         const timeout = setTimeout(() => {
@@ -13,17 +14,21 @@
         const onReady = () => {
           clearTimeout(timeout);
           if (window.StrapNeonAuth?.client) resolve(window.StrapNeonAuth);
-          else reject(new Error('Neon Auth initialized without a client.'));
+          else reject(window.StrapNeonAuthError || new Error('Neon Auth initialized without a client.'));
         };
         window.addEventListener('strap-neon-auth-ready', onReady, { once: true });
-        if (window.StrapNeonAuth?.client) onReady();
+        if (window.StrapNeonAuth?.client || window.StrapNeonAuthError) onReady();
       });
     }
     return authReadyPromise;
   };
   const getAuthToken = async () => {
     const auth = await waitForAuth();
-    if (typeof auth.getToken === 'function') return await auth.getToken();
+    if (typeof auth.getToken === 'function') {
+      const token = await auth.getToken();
+      if (typeof token === 'string' && token.trim()) return token;
+      throw new Error('Neon Auth did not return a usable session JWT. Please sign in again.');
+    }
     const client = auth.client;
     // Neon Auth exposes the signed JWT through getJWTToken(). The session's
     // .token field is an opaque cookie identifier, not a JWT.
@@ -94,10 +99,12 @@
       if (!values || typeof values !== 'object' || Array.isArray(values)) throw new Error('A data object is required.');
       const keys = Object.keys(values);
       if (!keys.length) return { ok: true };
+      if (!state.user?.id) throw new Error('Your Strap account is not ready to save data. Sign in and try again.');
+      const snapshot = JSON.parse(JSON.stringify(values));
       const previous = Promise.all(keys.map(key => (writeQueues.get(key) || Promise.resolve()).catch(() => {})));
       const next = previous.then(async () => {
-        const result = await request('/api/data', { method: 'PUT', body: JSON.stringify({ data: values }) });
-        Object.assign(state.data, values);
+        const result = await request('/api/data', { method: 'PUT', body: JSON.stringify({ data: snapshot }) });
+        Object.assign(state.data, snapshot);
         return result;
       });
       keys.forEach(key => writeQueues.set(key, next));
@@ -129,13 +136,15 @@
     return state;
   })();
   window.StrapAPI = {
-    request, data, ready: state.ready,
+    request, data, ready: state.ready, flush: () => data.flush(),
     get user() { return state.user; },
     get error() { return state.error; },
     get config() { return state.config; },
     setUser(user) { state.user = user; state.error = null; },
     async refresh() {
       state.error = null;
+      state.user = null;
+      state.data = {};
       await waitForAuth();
       const me = await request('/api/auth/me');
       state.user = me.user || null;
@@ -150,9 +159,15 @@
       return state.data;
     },
     async logout() {
+      try { await data.flush(); }
+      catch (error) { console.error('Strap pending data save failed before sign-out:', error); }
       try { await window.StrapNeonAuth?.client?.signOut(); }
       finally { state.user = null; state.data = {}; }
     },
-    async renameBusiness(name) { return request('/api/account/business', { method: 'PATCH', body: JSON.stringify({ name }) }); }
+    async renameBusiness(name) {
+      const result = await request('/api/account/business', { method: 'PATCH', body: JSON.stringify({ name }) });
+      if (state.user) state.user = { ...state.user, bizname: name };
+      return result;
+    }
   };
 })();

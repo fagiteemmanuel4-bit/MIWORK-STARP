@@ -9,23 +9,30 @@
   const api = {
     async signIn(email, password) {
       try {
-        const { error } = await window.StrapNeonAuth.client.signIn.email({
+        const client = window.StrapNeonAuth?.client;
+        if (!client) throw new Error('Authentication is still loading. Please try again.');
+        const { error } = await client.signIn.email({
           email: String(email || '').trim().toLowerCase(),
           password
         });
         if (error) throw error;
-        // Link an existing Strap workspace. Incomplete accounts resume the
-        // original onboarding form instead of being assigned a fake default business.
+
         D.email = String(email || '').trim().toLowerCase();
         D.password = password;
+
+        let synced = null;
         try {
-          const synced = await window.StrapAPI.request('/api/auth/sync', { method: 'POST', body: '{}' });
-          if (synced.user && synced.user.profileComplete === false) return { ok: true, skipVerification: true };
+          synced = await window.StrapAPI.request('/api/auth/sync', { method: 'POST', body: '{}' });
         } catch (syncError) {
-          if (syncError?.code !== 'PROFILE_SETUP_REQUIRED' && syncError?.payload?.code !== 'PROFILE_SETUP_REQUIRED') throw syncError;
-          return { ok: true, skipVerification: true };
+          const code = syncError?.code || syncError?.payload?.code;
+          if (code !== 'PROFILE_SETUP_REQUIRED') throw syncError;
         }
-        return { ok: true };
+
+        if (synced?.user) hydrateDraftFromUser(synced.user);
+        if (!synced?.user || synced.user.profileComplete === false) {
+          return { ok: true, resumeSetupAt: firstMissingSetupStep() };
+        }
+        return { ok: true, redirectToDashboard: true };
       } catch (e) {
         return { ok: false, msg: e?.message || e?.error?.message || 'Sign-in failed. Please try again.' };
       }
@@ -119,7 +126,7 @@
     },
     async createAccount(data) {
       try {
-        const photoUrl = typeof data.photo === 'string' ? data.photo : null;
+        const photoUrl = typeof data.photo === 'string' ? data.photo : (typeof data.photoUrl === 'string' ? data.photoUrl : null);
         const result = await window.StrapAPI.request('/api/auth/register', { method: 'POST', body: JSON.stringify({
           email: data.email, password: data.password, name: data.name, bizname: data.bizname,
           currency: data.currency || 'NGN', bcountry: data.bcountry || data.country,
@@ -143,13 +150,39 @@
   });
   const flow = $('#flow'), land = $('#land');
   const SUB = new URLSearchParams(location.search).get('subscribe') === '1';
-  const D = {}; let hist = [], tmr, tmr2;
+  const D = {}; let hist = [], tmr;
   const el = (t, c, x) => { const e = document.createElement(t); if (c) e.className = c; if (x != null) e.textContent = x; return e; };
   const ARROW = '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 6l-6 6 6 6"/></svg>';
   const COUNTRIES = [['Nigeria','NGN'],['Ghana','GHS'],['Kenya','KES'],['South Africa','ZAR'],['Egypt','EGP'],['Uganda','UGX'],['Tanzania','TZS'],['Rwanda','RWF'],['Senegal','XOF'],['Côte d’Ivoire','XOF'],['Cameroon','XAF'],['United Kingdom','GBP'],['United States','USD'],['Canada','CAD'],['United Arab Emirates','AED'],['India','INR']];
   const CC = Object.fromEntries(COUNTRIES), COUNTRY_OPTS = [...COUNTRIES.map(c => c[0]), 'Other'];
   const CURS = [['NGN','Nigerian naira (NGN)'],['GHS','Ghanaian cedi (GHS)'],['KES','Kenyan shilling (KES)'],['ZAR','South African rand (ZAR)'],['EGP','Egyptian pound (EGP)'],['UGX','Ugandan shilling (UGX)'],['TZS','Tanzanian shilling (TZS)'],['RWF','Rwandan franc (RWF)'],['XOF','West African CFA franc (XOF)'],['XAF','Central African CFA franc (XAF)'],['GBP','British pound (GBP)'],['USD','US dollar (USD)'],['EUR','Euro (EUR)'],['CAD','Canadian dollar (CAD)'],['AED','UAE dirham (AED)'],['INR','Indian rupee (INR)']];
   const first = () => (D.name || '').split(/\s+/)[0];
+  function hydrateDraftFromUser(user) {
+    const profile = user?.profile && typeof user.profile === 'object' ? user.profile : {};
+    Object.assign(D, profile);
+    D.email = user?.email || D.email || '';
+    D.name = user?.name || D.name || '';
+    D.bizname = user?.bizname || D.bizname || '';
+    D.currency = user?.currency || D.currency || 'NGN';
+    D.bcountry = user?.country || D.bcountry || '';
+    D.photoUrl = user?.photoUrl || D.photoUrl || null;
+  }
+  function firstMissingSetupStep() {
+    if ((D.name || '').trim().split(/\s+/).filter(Boolean).length < 2) return 'name';
+    if (dobErr(D.dob)) return 'dob';
+    if (!D.country) return 'country';
+    if (!D.currency) return 'currency';
+    if (!D.bizname || String(D.bizname).trim().toLowerCase() === 'my business') return 'bizname';
+    if (!['yes', 'no'].includes(D.registered)) return 'registered';
+    if (D.registered === 'yes' && !D.regno) return 'regno';
+    if (!D.mode) return 'mode';
+    if (!D.branches) return 'branches';
+    if (!D.bcountry || !D.state || !D.city) return 'location';
+    if (!D.street) return 'address';
+    if (!['yes', 'no'].includes(D.hasSite)) return 'hasSite';
+    if (D.hasSite === 'yes' && !D.site) return 'siteUrl';
+    return 'photo';
+  }
   const sel = m => v => v ? '' : m;
   const txt = (m, n = 2) => v => v.trim().length >= n ? '' : m;
   const score = p => (p.length >= 8) + (/[a-z]/i.test(p) && /\d/.test(p)) + (p.length >= 12) + (/[^A-Za-z0-9]/.test(p) && /[A-Z]/.test(p));
@@ -176,8 +209,7 @@
     lemail: { t: 'Welcome back', s: 'Enter your email address to sign in.', f: [{ key: 'lemail', type: 'email', ph: 'example@email.com', ac: 'email', v: emailError, link: ['Forgot password?', 'fgemail'] }], btn: 'Continue',
       note: 'New to Strap? <a href="#" data-flow="email">Create an account</a>', next: 'lpass' },
     lpass: { t: 'Enter your password', s: () => `Signing in as ${D.lemail}`, f: [{ key: 'lpw', type: 'password', ph: 'Password', ac: 'current-password', v: v => v ? '' : 'Enter your password.' }], btn: 'Sign in',
-      act: async () => api.signIn(D.lemail, D.lpw), next: 'lok', skipVerificationNext: 'name' },
-    lok: { k: 'success', noBack: 1, t: 'You’re signed in', s: 'Welcome back to Strap.', label: 'Open dashboard', auto: 2200, go: () => { location.href = '/dashboard'; } },
+      act: async () => api.signIn(D.lemail, D.lpw) },
     fgemail: { t: 'Reset your password', s: 'Enter your account email and we’ll send you a 6 digit code.', f: [{ key: 'fgemail', type: 'email', ph: 'example@email.com', ac: 'email', def: () => D.lemail, v: emailError }], btn: 'Send code',
       act: () => api.sendCode(D.fgemail, 'reset'), next: 'fgcode' },
     fgcode: { k: 'code', purpose: 'reset', len: 6, wait: 30, mail: 'fgemail', save: 'fgcode', verify: (m, c) => api.verifyCode(m, c, 'reset'), t: 'Enter the code', s: () => `We sent a 6 digit code to ${D.fgemail}.`, next: 'fgnew' },
@@ -189,9 +221,8 @@
     email: { t: 'Enter your email address', s: 'We’ll send you a verification code', f: [{ key: 'email', type: 'email', ph: 'example@email.com', ac: 'email', v: emailError }], btn: 'Continue',
       note: 'By continuing, you agree to receive transactional messaging about your account. <a href="#" data-legal="privacy">Privacy Policy</a> &amp; <a href="#" data-legal="terms">Terms</a>', next: 'password' },
     password: { t: 'Set Password', s: 'You’ll verify your email next', f: [{ key: 'password', type: 'password', ph: 'Create a password', ac: 'new-password', meter: 1, v: pwErr }], btn: 'Continue',
-      act: () => api.sendCode(D.email, 'signup'), next: 'code', skipVerificationNext: 'verified' },
-    code: { k: 'code', purpose: 'signup', len: 6, t: 'Code sent to your Email', s: 'We sent a 6 digit code. If you can’t find the email, check spam before resending.', next: 'verified' },
-    verified: { k: 'verified', mid: 1, noBack: 1, t: 'Verified', s: 'Ready to set up your business?', next: 'name' },
+      act: () => api.sendCode(D.email, 'signup'), next: 'code' },
+    code: { k: 'code', purpose: 'signup', len: 6, t: 'Code sent to your Email', s: 'We sent a 6 digit code. If you can’t find the email, check spam before resending.', next: 'name' },
     name: { t: 'What’s your name?', noBack: 1, f: [{ key: 'name', ph: 'Your full name', ac: 'name', v: v => v.trim().split(/\s+/).filter(Boolean).length < 2 ? 'Enter your first and last name.' : '' }], btn: 'Continue', next: 'dob' },
     dob: { t: 'When were you born?', s: 'You must be 18 or older to set up a business.', f: [{ key: 'dob', type: 'date', ph: '', ac: 'bday', v: dobErr }], btn: 'Continue', next: 'country' },
     country: { t: 'Which country are you in?', f: [{ key: 'country', opts: COUNTRY_OPTS, ph: 'Select', v: sel('Select your country.'), sync: v => { D.currency = CC[v] || 'USD'; } }], btn: 'Continue', next: 'currency' },
@@ -214,7 +245,7 @@
     hasSite: { k: 'choice', t: 'Does your business have a website?', key: 'hasSite', o: [['Yes', 'yes'], ['No', 'no']], next: v => v === 'yes' ? 'siteUrl' : 'siteLater' },
     siteUrl: { t: 'What’s your website?', f: [{ key: 'site', type: 'url', ph: 'www.mybusiness.com', v: urlErr }], btn: 'Continue', next: 'photo' },
     siteLater: { k: 'choice', t: 'Want Strap to get you one later?', s: 'We can help you set up an online storefront when you’re ready.', key: 'wantSite', o: [['Yes, set one up later', 'yes'], ['No, not now', 'no']], next: 'photo' },
-    photo: { k: 'image', t: 'Set business profile picture', next: 'plan' },
+    photo: { k: 'image', t: 'Set business profile picture', next: 'done' },
     plan: { k: 'plan', t: `Start for ${ngn(PLAN.intro)}/month`,
       s: () => `${ngn(PLAN.intro)}/mo for ${PLAN.introMonths} months. Continues at ${ngn(PLAN.regular)}/mo from ${fmtDate(planDate())}.`,
       skipTop: 'done', onSkip: () => { D.plan = { status: 'skipped' }; }, next: 'done' },
@@ -229,7 +260,7 @@
       act: () => api.sendCode(D.sEmail), next: 'sce' },
     sce: { k: 'code', len: 6, wait: 30, mail: 'sEmail', verify: (m, c) => api.verifyCode(m, c), pw: 1, t: 'Check your email', s: () => `We sent a 6 digit code to ${D.sEmail}.`, next: 'scp' },
     scp: { k: 'code', len: 6, wait: 30, mail: 'sPhone', verify: (m, c) => api.verifyCode(m, c), pw: 1, t: 'Check your phone', s: () => `We sent a 6 digit code by SMS to ${D.sPhone}.`, next: 'subdone' },
-    subdone: { k: 'success', noBack: 1, t: 'Premium is active', s: 'Thank you. Your branch, staff and product limits are now raised.', label: 'Back to dashboard', auto: 2800, before: () => { if (D.sEmail) D.plan = { ...D.plan, contact: { email: D.sEmail, phone: D.sPhone, verified: true } };  }, go: () => { location.href = '/dashboard'; } },
+    subdone: { k: 'success', noBack: 1, t: 'Premium is active', s: 'Thank you. Your branch, staff and product limits are now raised.', label: 'Back to dashboard', before: () => { if (D.sEmail) D.plan = { ...D.plan, contact: { email: D.sEmail, phone: D.sPhone, verified: true } }; }, go: () => { location.replace('/dashboard'); } },
     done: { k: 'final', noBack: 1, mid: 1, t: 'You’re all set' }
   };
 
@@ -237,6 +268,7 @@
   const reduced = () => !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
   function startFlow(first = 'email') {
     hist = [];
+    Object.keys(D).forEach(key => delete D[key]);
     land.hidden = true; flow.hidden = false; go(first);
   }
   function closeFlow() {
@@ -253,7 +285,7 @@
 
   // old page slides/fades out, then the new page is built and its rows rise in one by one
   function render(id, dir = 1) {
-    clearInterval(tmr); clearTimeout(tmr2);
+    clearInterval(tmr);
     const my = ++rid, old = flow.firstElementChild;
     if (old && !flow.hidden && !reduced()) {
       old.classList.add('leave', dir < 0 ? 'bk' : 'fwd');
@@ -320,15 +352,21 @@
       if (btn.disabled) return;
       rows.forEach(([f, i]) => D[f.key] = i.value.trim());
       if (st.act) {
-        lock(btn, true); const r = await st.act(); lock(btn, false);
-        if (!r.ok) { gerr.textContent = r.msg || 'Something went wrong. Try again.'; return; }
+        lock(btn, true);
+        let r;
+        try { r = await st.act(); }
+        catch (error) { r = { ok: false, msg: error?.message || 'Something went wrong. Try again.' }; }
+        lock(btn, false);
+        if (!r?.ok) { gerr.textContent = r?.msg || 'Something went wrong. Try again.'; return; }
+        if (r.redirectToDashboard) { location.replace('/dashboard'); return; }
+        if (r.resumeSetupAt) { hist = []; go(r.resumeSetupAt); return; }
         if (r.skipVerification && st.skipVerificationNext) { go(st.skipVerificationNext); return; }
       }
       go(nxt(st));
     };
     foot.append(btn);
     if (st.skip) { const s = pill('Skip for now', 'alt'); s.onclick = () => go(st.skip); foot.append(s); }
-    if (st.note) { const n = el('p', 'note'); n.innerHTML = st.note; $$('a[data-flow]', n).forEach(a => a.onclick = e => { e.preventDefault(); hist = []; go(a.dataset.flow); }); foot.append(n); }
+    if (st.note) { const n = el('p', 'note'); n.innerHTML = st.note; $('a[data-flow]', n).forEach(a => a.onclick = e => { e.preventDefault(); startFlow(a.dataset.flow); }); foot.append(n); }
   }
 
   function kChoice(st, body, foot) {
@@ -381,7 +419,7 @@
       start(30);
       toast('A new verification code was requested. Check your inbox and spam folder.');
     };
-    i.addEventListener('input', () => { i.value = i.value.replace(/\D/g, '').slice(0, N); err.textContent = ''; btn.disabled = i.value.length < N; if (i.value.length === N) btn.click(); });
+    i.addEventListener('input', () => { i.value = i.value.replace(/\D/g, '').slice(0, N); err.textContent = ''; btn.disabled = i.value.length !== N; });
     btn.onclick = async () => {
       if (btn.disabled) return; lock(btn, true, 'Verifying…');
       const r = await (st.verify || api.verifySignupCode)(mail(), i.value); lock(btn, false);
@@ -429,10 +467,30 @@
     const m = el('div', 'okm');
     m.innerHTML = '<svg viewBox="0 0 120 120" aria-hidden="true"><circle class="okr" cx="60" cy="60" r="54" pathLength="1"/><circle class="okd" cx="60" cy="60" r="44"/><path class="okt" d="M41 62l14 14 26-31" pathLength="1"/></svg><i></i><i></i><i></i>';
     body.prepend(m);
-    const b = pill(st.label || 'Continue'); let done = false; const run = () => { if (done) return; done = true; clearTimeout(tmr2); st.go(); };
-    b.onclick = run; foot.append(b);
-    clearTimeout(tmr2); if (st.auto) tmr2 = setTimeout(run, reduced() ? 600 : st.auto);
+    const b = pill(st.label || 'Continue');
+    b.onclick = () => { if (st.go) st.go(); };
+    foot.append(b);
   }
+  let turnstileLoad = null;
+  function ensureTurnstile() {
+    if (window.turnstile?.render) return Promise.resolve(window.turnstile);
+    if (!turnstileLoad) {
+      turnstileLoad = new Promise((resolve, reject) => {
+        let script = document.querySelector('script[src*="challenges.cloudflare.com/turnstile/v0/api.js"]');
+        if (!script) {
+          script = document.createElement('script');
+          script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+          script.async = true;
+          script.defer = true;
+          document.head.appendChild(script);
+        }
+        script.addEventListener('load', () => window.turnstile?.render ? resolve(window.turnstile) : reject(new Error('Security check did not initialize.')), { once: true });
+        script.addEventListener('error', () => reject(new Error('Security check could not load. Check your connection and retry.')), { once: true });
+      });
+    }
+    return turnstileLoad;
+  }
+
   function kFinal(st, body, foot) {
     body.append(el('p', 'ss', `${D.bizname || 'Your business'} is ready to set up on Strap.`));
     const challenge = el('div', 'turnstile-wrap');
@@ -442,22 +500,32 @@
     const b = pill('Open my workspace'); b.disabled = true;
     b.onclick = () => launch(b);
     foot.append(b);
-    let widgetId = null, attempts = 0;
-    const mount = () => {
-      if (widgetId !== null || !window.turnstile) {
-        if (widgetId === null && attempts++ < 40) setTimeout(mount, 250);
-        return;
-      }
-      widgetId = window.turnstile.render(target, {
+    let widgetId = null;
+    const renderWidget = turnstile => {
+      if (widgetId !== null) return;
+      widgetId = turnstile.render(target, {
         sitekey: '0x4AAAAAAGIY0URD6s_Mg1m1',
         action: 'strap_signup',
         callback: token => { D.turnstileToken = token; err.textContent = ''; b.disabled = false; },
         'expired-callback': () => { D.turnstileToken = ''; b.disabled = true; err.textContent = 'Security check expired. Please complete it again.'; },
-        'error-callback': () => { D.turnstileToken = ''; b.disabled = true; err.textContent = 'Security check failed to load. Refresh and try again.'; }
+        'error-callback': () => { D.turnstileToken = ''; b.disabled = true; err.textContent = 'Security check failed. Please retry.'; }
       });
     };
+    const mount = () => ensureTurnstile().then(renderWidget).catch(error => {
+      err.textContent = error.message || 'Security check could not load.';
+      let retry = $('#turnstile-retry', foot);
+      if (!retry) {
+        retry = pill('Retry security check', 'alt');
+        retry.id = 'turnstile-retry';
+        retry.onclick = () => { retry.disabled = true; retry.textContent = 'Loading…'; turnstileLoad = null; mount(); };
+        foot.append(retry);
+      } else { retry.disabled = false; retry.textContent = 'Retry security check'; }
+    });
     mount();
-    D.resetTurnstile = () => { D.turnstileToken = ''; b.disabled = true; if (widgetId !== null && window.turnstile) window.turnstile.reset(widgetId); };
+    D.resetTurnstile = () => {
+      D.turnstileToken = ''; b.disabled = true;
+      if (widgetId !== null && window.turnstile) window.turnstile.reset(widgetId);
+    };
   }
 
   /* ===== hand off to the dashboard page (dashboard.html) ===== */
@@ -470,15 +538,26 @@
   }
   async function launch(btn) {
     lock(btn, true, 'Setting up…');
-    document.body.classList.add('lock'); loader.hidden = false; void loader.offsetWidth; loader.classList.add('on');
-    const t0 = Date.now(); let acc;
-    try { acc = await api.createAccount(D); } catch (e) { acc = { ok: false }; }
-    if (!acc.ok) {
-      loader.classList.remove('on'); setTimeout(() => { loader.hidden = true; document.body.classList.remove('lock'); }, 300);
-      lock(btn, false); if (D.resetTurnstile) D.resetTurnstile(); toast(acc.msg || 'We couldn’t finish setup. Try again.'); return;
+    document.body.classList.add('lock');
+    loader.hidden = false;
+    void loader.offsetWidth;
+    loader.classList.add('on');
+    let result;
+    try {
+      result = await api.createAccount(D);
+    } catch (error) {
+      result = { ok: false, msg: error?.message || 'We couldn’t finish setting up your workspace.' };
     }
-    await sleep(Math.max(0, 900 - (Date.now() - t0)));
-    location.href = '/dashboard';
+    if (!result?.ok) {
+      loader.classList.remove('on');
+      loader.hidden = true;
+      document.body.classList.remove('lock');
+      lock(btn, false);
+      D.resetTurnstile?.();
+      toast(result?.msg || 'We couldn’t finish setup. Try again.');
+      return;
+    }
+    location.replace('/dashboard');
   }
 
   /* ===== landing: create account or log in; ?subscribe=1 opens the card screen only ===== */
@@ -492,8 +571,11 @@
         await window.StrapAPI.ready;
         await window.StrapAPI.refresh();
         if (!window.StrapAPI.user) throw new Error('Sign in to finish setting up your workspace.');
-        if (window.StrapAPI.user.profileComplete === false) { D.email = window.StrapAPI.user.email; go('name'); }
-        else location.replace('/dashboard');
+        if (window.StrapAPI.user.profileComplete === false) {
+          hydrateDraftFromUser(window.StrapAPI.user);
+          hist = [];
+          go(firstMissingSetupStep());
+        } else location.replace('/dashboard');
       } catch (error) {
         closeFlow(); toast(error.message || 'Please sign in to continue setup.');
       }

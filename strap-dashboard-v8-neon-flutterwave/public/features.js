@@ -14,7 +14,14 @@ window.StrapFeatures = (() => {
     reports: [], seeded: false, pushAsked: false, mcp: [], transfers: [], dismissed: [], itemsByBranch: {}
   });
   let S = defaults();
-  const save = () => window.StrapAPI ? window.StrapAPI.data.set('features', S) : Promise.reject(new Error('Strap storage is not ready.'));
+  let saveChain = Promise.resolve();
+  const save = () => {
+    if (!window.StrapAPI) return Promise.reject(new Error('Strap storage is not ready.'));
+    const snapshot = JSON.parse(JSON.stringify(S));
+    const next = saveChain.catch(() => {}).then(() => window.StrapAPI.data.set('features', snapshot));
+    saveChain = next;
+    return next;
+  };
   async function hydrate() {
     const remote = window.StrapAPI?.data.get('features');
     if (remote && typeof remote === 'object' && !Array.isArray(remote)) Object.assign(S, remote);
@@ -264,7 +271,15 @@ window.StrapFeatures = (() => {
       foot: pill('Switch branch', 'data-sw' + (sel === S.active ? ' disabled' : '')) + pill('Add a branch', 'data-add', 'alt') + (S.plan === 'free' ? `<p class="note">${S.branches.length} of ${lim().branches} branches used on the free plan</p>` : '') });
     const sw = $('[data-sw]', o.el);
     $$('[data-b]', o.el).forEach(b => b.onclick = () => { sel = b.dataset.b; $$('[data-b]', o.el).forEach(x => x.classList.toggle('on', x === b)); sw.disabled = sel === S.active; K.fx('tap'); });
-    sw.onclick = () => { if (sw.disabled) return; const id = sel, nm = branch(id).name; o.ok('Switched to ' + esc(nm), 'Taking you back to your dashboard.', 'Back to dashboard', () => { S.active = id; save(); location.reload(); }, 2200); };
+    sw.onclick = () => {
+      if (sw.disabled) return;
+      const id = sel, nm = branch(id).name;
+      o.ok('Switched to ' + esc(nm), 'Taking you back to your dashboard.', 'Back to dashboard', async () => {
+        S.active = id;
+        try { await save(); location.reload(); }
+        catch (error) { toast(error.message || 'Could not save the selected branch. Try again.'); }
+      }, 2200);
+    };
     $('[data-add]', o.el).onclick = () => {
       if (S.branches.length >= lim().branches) return gate(`The free plan includes ${LIM.free.branches} branches. Upgrade to Premium to add more.`);
       o.step({ t: 'Name your branch', s: 'Give it a name your team will recognise.', back: () => branchHome(o, sel), body: fld('bn', 'e.g. Lekki branch', { max: 40 }), foot: pill('Create branch', 'data-ok disabled') });
@@ -574,5 +589,5 @@ window.StrapFeatures = (() => {
   }
   document.addEventListener('click', e => { const f = e.target.closest('[data-fx]'); if (f && ctx) { e.stopPropagation(); open(f.dataset.fx); } }, true);
 
-  return { api, state: S, notify, has: k => !!PAGES[k] || !!FLOWS[k], branchName: () => branch().name, open, mountHome, bind, stats, aiImport, items, setItems, hydrate, init: c => { ctx = c; } };
+  return { api, state: S, notify, has: k => !!PAGES[k] || !!FLOWS[k], branchName: () => branch().name, open, mountHome, bind, stats, aiImport, items, setItems, hydrate, flush: () => saveChain, init: c => { ctx = c; } };
 })();

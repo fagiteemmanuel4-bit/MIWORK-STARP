@@ -24,17 +24,29 @@
   Object.assign(api, {
     async getDashboard() {
       await window.StrapAPI.ready;
-      // A fresh page can race the persisted Neon session on slower mobile
-      // connections. Retry the authenticated profile request once before
-      // deciding that the user is signed out.
       if (!window.StrapAPI.user) {
-        try { await window.StrapAPI.refresh(); }
-        catch (error) { console.warn('Strap dashboard session restore retry failed:', error); }
+        try {
+          await window.StrapAPI.refresh();
+        } catch (error) {
+          if (error?.status === 401) { location.replace('/?signin=1'); return null; }
+          throw error;
+        }
       }
-      if (!window.StrapAPI.user) { location.replace('/'); return null; }
+      if (!window.StrapAPI.user) { location.replace('/?signin=1'); return null; }
       if (window.StrapAPI.user.profileComplete === false) { location.replace('/?complete=1'); return null; }
-      await Promise.all([StrapStore.hydrate(), StrapFeatures.hydrate()]);
+
       D = window.StrapAPI.user;
+      await Promise.all([StrapStore.hydrate(), StrapFeatures.hydrate()]);
+
+      const seed = {};
+      if (!window.StrapAPI.data.get('store')) seed.store = StrapStore.state;
+      if (!window.StrapAPI.data.get('features')) seed.features = StrapFeatures.state;
+      if (Object.keys(seed).length) await window.StrapAPI.data.setMany(seed);
+      if (!StrapStore.getReceiptRaw()) {
+        await StrapStore.setReceiptRaw(StrapReceipt.defaults(D.bizname || 'My Store'));
+      }
+      await window.StrapAPI.data.flush();
+
       const params = new URLSearchParams(location.search);
       if (params.get('payment') === 'verify') {
         const txRef = params.get('tx_ref'), transactionId = params.get('transaction_id');
@@ -49,8 +61,6 @@
   });
 
   const dash = $('#dash'), loader = $('#loader'), loaderMsg = $('#loader-msg');
-  const LOAD_MSGS = ['Setting up your store', 'Stocking the shelves', 'Counting today’s sales', 'Almost there'];
-  const LOAD_MIN = 3000;
   const IC = {
     bell: '<path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
     home: '<path class="f" d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/>',
@@ -83,13 +93,9 @@
     return { line: d, area: `${d} L${W - 16},${H} L0,${H} Z`, end: pts[pts.length - 1] };
   }
 
-  // the loader is already on screen when this page opens; cycle its messages while data loads
+  // The loader appears only while real account requests are pending.
   function startMsgs() {
-    let k = 0; loaderMsg.textContent = LOAD_MSGS[0];
-    return setInterval(() => {
-      k = Math.min(k + 1, LOAD_MSGS.length - 1); loaderMsg.textContent = LOAD_MSGS[k];
-      loaderMsg.style.animation = 'none'; void loaderMsg.offsetWidth; loaderMsg.style.animation = '';
-    }, LOAD_MIN / LOAD_MSGS.length);
+    loaderMsg.textContent = 'Loading your workspace…';
   }
   function showBootError(error) {
     console.error('Strap dashboard startup failed:', error);
@@ -113,26 +119,25 @@
     document.body.classList.add('lock');
   }
   async function boot() {
-    loader.hidden = false; loader.classList.add('on');
-    const msgs = startMsgs(), t0 = Date.now();
+    loader.hidden = false;
+    loader.classList.add('on');
+    startMsgs();
     try {
-      const data = await api.getDashboard(D);
-      await sleep(Math.max(0, LOAD_MIN - (Date.now() - t0)));
-      clearInterval(msgs);
-      if (!data) {
-        loaderMsg.textContent = 'We couldn’t find an active session. Returning to sign in…';
-        return;
-      }
+      const data = await api.getDashboard();
+      if (!data) { loader.hidden = true; return; }
       buildDash(data);
-      dash.hidden = false; document.body.classList.add('is-dash');
-      const tc = document.querySelector('meta[name=theme-color]'); if (tc) tc.content = '#0a0a0a';
+      dash.hidden = false;
+      document.body.classList.add('is-dash');
+      const tc = document.querySelector('meta[name=theme-color]');
+      if (tc) tc.content = '#0a0a0a';
       window.scrollTo(0, 0);
-      await sleep(80);
-      dash.classList.add('go'); loader.classList.add('out'); runCounts();
-      await sleep(reduced() ? 0 : 850);
-      loader.hidden = true; loader.className = 'loader'; document.body.classList.remove('lock');
+      dash.classList.add('go');
+      runCounts();
+      loader.classList.add('out');
+      loader.hidden = true;
+      loader.className = 'loader';
+      document.body.classList.remove('lock');
     } catch (error) {
-      clearInterval(msgs);
       showBootError(error);
     }
   }
@@ -281,18 +286,12 @@
     bell.addEventListener('click', () => { bell.classList.remove('ring'); void bell.offsetWidth; bell.classList.add('ring'); StrapFeatures.open('notifications'); });
   }
 
-  // numbers climb to their value as each card arrives
+  // Display the values returned from the authenticated user's database record.
   function runCounts() {
-    $$('[data-count]', dash).forEach(n => {
-      const to = +n.dataset.count, fmt = n.dataset.kind === 'money' ? money : num;
-      const card = n.closest('.in'), delay = card ? (+card.style.getPropertyValue('--i') || 0) * 70 + 350 : 400;
-      if (reduced()) { n.textContent = fmt(to); return; }
-      const dur = n.dataset.kind === 'money' ? 1600 : 1100;
-      setTimeout(() => {
-        const t0 = performance.now();
-        const step = t => { const p = Math.min(1, (t - t0) / dur); n.textContent = fmt(to * (1 - Math.pow(1 - p, 4))); if (p < 1) requestAnimationFrame(step); else n.textContent = fmt(to); };
-        requestAnimationFrame(step);
-      }, delay);
+    $('[data-count]', dash).forEach(n => {
+      const value = Number(n.dataset.count) || 0;
+      const format = n.dataset.kind === 'money' ? money : num;
+      n.textContent = format(value);
     });
   }
 

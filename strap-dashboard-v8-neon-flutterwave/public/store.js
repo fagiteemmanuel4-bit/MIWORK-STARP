@@ -7,7 +7,7 @@ window.StrapStore = (() => {
   let S = blank(), saveDepth = 0, saveDirty = false;
   const save = () => {
     if (saveDepth) { saveDirty = true; return Promise.resolve({ deferred: true }); }
-    return window.StrapAPI ? window.StrapAPI.data.set('store', S) : Promise.reject(new Error('Strap storage is not ready.'));
+    return window.StrapAPI ? window.StrapAPI.data.set('store', JSON.parse(JSON.stringify(S))) : Promise.reject(new Error('Strap storage is not ready.'));
   };
   async function batch(mutator, includeFeatures = false) {
     const storeBefore = JSON.parse(JSON.stringify(S));
@@ -242,6 +242,6 @@ window.StrapStore = (() => {
 
     // ----- receipt template (JSON) & prefs -----
     getReceiptRaw() { return S.receipt; },
-    setReceiptRaw(t) { S.receipt = t; save(); }
+    setReceiptRaw(t) { S.receipt = t; return save(); }
   };
 })();
