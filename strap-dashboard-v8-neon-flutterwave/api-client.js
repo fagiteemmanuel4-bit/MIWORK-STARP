@@ -25,13 +25,20 @@
     const auth = await waitForAuth();
     if (typeof auth.getToken === 'function') return await auth.getToken();
     const client = auth.client;
+    // Neon Auth exposes the signed JWT through getJWTToken(). The session's
+    // .token field is an opaque cookie identifier, not a JWT.
+    if (typeof client.getJWTToken === 'function') {
+      const jwt = await client.getJWTToken();
+      if (typeof jwt === 'string' && jwt.trim()) return jwt;
+    }
     if (typeof client.token === 'function') {
       const result = await client.token();
       if (result?.error) throw result.error;
-      return result?.data?.token || null;
+      if (typeof result?.data?.token === 'string' && result.data.token.trim()) return result.data.token;
     }
-    if (typeof client.getJWTToken === 'function') return await client.getJWTToken();
-    return null;
+    const sessionResult = await client.getSession?.();
+    if (sessionResult?.error) throw sessionResult.error;
+    return sessionResult?.data?.session?.access_token || null;
   };
   const request = async (url, options = {}) => {
     let authToken = null;
