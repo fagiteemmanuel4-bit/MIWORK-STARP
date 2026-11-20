@@ -83,8 +83,14 @@ jobs:
           test "$status" = "403"
           status="$(curl --silent --output /dev/null --write-out "%{http_code}" "$PREVIEW_URL/api/auth/me")"
           test "$status" = "401"
-          echo "Checking product media upload is protected by authentication"
+          echo "Checking product and profile media upload are protected by authentication"
           status="$(curl --silent --output /dev/null --write-out "%{http_code}" -X POST -H 'Content-Type: application/json' -d '{}' "$PREVIEW_URL/api/media/presign")"
+          test "$status" = "401"
+          status="$(curl --silent --output /dev/null --write-out "%{http_code}" -X POST -H 'Content-Type: application/json' -d '{}' "$PREVIEW_URL/api/media/profile/presign")"
+          test "$status" = "401"
+          status="$(curl --silent --output /dev/null --write-out "%{http_code}" -X DELETE -H 'Content-Type: application/json' -d '{}' "$PREVIEW_URL/api/media/profile/object")"
+          test "$status" = "401"
+          status="$(curl --silent --output /dev/null --write-out "%{http_code}" -X DELETE -H 'Content-Type: application/json' -d '{}' "$PREVIEW_URL/api/account")"
           test "$status" = "401"
           curl --fail --show-error --silent "$PREVIEW_URL/products.js" -o /tmp/strap-products.js
           grep -q "/api/media/presign" /tmp/strap-products.js

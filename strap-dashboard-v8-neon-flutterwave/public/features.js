@@ -188,9 +188,15 @@ window.StrapFeatures = (() => {
       if (t.closest('[data-b1]')) step1(); if (t.closest('[data-b2]')) step2();
       if (t.closest('[data-go]')) {
         await cover('Deleting your account', async () => {
-          const result = await api.deleteAccount({ survey: [...A.reasons], note: A.note }); if (!result.ok) throw new Error(result.msg || 'Account deletion failed.');
-          
-        }); location.href = 'index.html';
+          const result = await api.deleteAccount({ survey: [...A.reasons], note: A.note });
+          if (!result.ok) throw new Error(result.msg || 'Account deletion failed.');
+          try { await window.StrapAPI.logout(); }
+          catch (error) { console.warn('Strap account was deleted, but Neon sign-out needed a retry:', error); }
+          if (result.mediaCleanupComplete === false) {
+            toast('Your account data was deleted, but some stored images need cleanup. Please contact support.');
+          }
+        });
+        location.replace('/');
       }
     });
     s.el.addEventListener('input', e => { if (e.target.id === 'dc') $('[data-go]', s.el).disabled = e.target.value.trim().toUpperCase() !== 'DELETE'; });

@@ -4,7 +4,7 @@ import rateLimit from 'express-rate-limit';
 import pg from 'pg';
 import crypto from 'node:crypto';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
-import { S3Client, PutObjectCommand, DeleteObjectCommand, PutBucketCorsCommand } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand, DeleteObjectCommand, ListObjectsV2Command, DeleteObjectsCommand, PutBucketCorsCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -359,6 +359,33 @@ app.delete('/api/media/object', auth, asyncRoute(async (req, res) => {
   await getMediaClient().send(new DeleteObjectCommand({ Bucket: MEDIA_BUCKET, Key: key }));
   res.json({ ok: true });
 }));
+app.post('/api/media/profile/presign', neonIdentity, asyncRoute(async (req, res) => {
+  if (!req.neonIdentity.emailVerified) return fail(res, 403, 'Verify your email before uploading a profile picture.');
+  const contentType = String(req.body?.contentType || '').toLowerCase().trim();
+  const extension = PUBLIC_IMAGE_TYPES[contentType];
+  const size = Number(req.body?.size);
+  if (!extension) return fail(res, 400, 'Choose a JPG, PNG, WebP, AVIF or GIF image.');
+  if (!Number.isSafeInteger(size) || size < 1 || size > 5 * 1024 * 1024) return fail(res, 413, 'Profile pictures must be 5 MB or smaller.');
+  const key = 'profiles/' + req.neonIdentity.id + '/' + crypto.randomUUID() + '.' + extension;
+  await ensureMediaCors();
+  const uploadUrl = await getSignedUrl(getMediaClient(), new PutObjectCommand({
+    Bucket: MEDIA_BUCKET, Key: key, ContentType: contentType,
+    CacheControl: 'public, max-age=31536000, immutable'
+  }), { expiresIn: 300 });
+  res.json({
+    ok: true, key, uploadUrl, method: 'PUT',
+    headers: { 'Content-Type': contentType },
+    publicUrl: MEDIA_PUBLIC_URL + '/' + key.split('/').map(encodeURIComponent).join('/'),
+    expiresIn: 300
+  });
+}));
+app.delete('/api/media/profile/object', neonIdentity, asyncRoute(async (req, res) => {
+  const key = cleanText(req.body?.key, 1024);
+  const prefix = 'profiles/' + req.neonIdentity.id + '/';
+  if (!key || !key.startsWith(prefix) || key.includes('..')) return fail(res, 400, 'Invalid profile image reference.');
+  await getMediaClient().send(new DeleteObjectCommand({ Bucket: MEDIA_BUCKET, Key: key }));
+  res.json({ ok: true });
+}));
 app.post('/api/security/pin', auth, asyncRoute(async (req, res) => {
   const pin = String(req.body?.pin || '');
   if (!/^\d{4}$/.test(pin) || weakPins.has(pin)) return fail(res, 400, 'Choose a less predictable 4-digit PIN.');
@@ -400,16 +427,105 @@ app.post('/api/security/pin/verify', auth, asyncRoute(async (req, res) => {
   finally { client.release(); }
 }));
 
+async function deleteMediaPrefix(prefix) {
+  const mediaClient = getMediaClient();
+  let continuationToken;
+  do {
+    const page = await mediaClient.send(new ListObjectsV2Command({
+      Bucket: MEDIA_BUCKET, Prefix: prefix, ContinuationToken: continuationToken, MaxKeys: 1000
+    }));
+    const objects = (page.Contents || []).filter(item => item.Key).map(item => ({ Key: item.Key }));
+    if (objects.length) {
+      const deleted = await mediaClient.send(new DeleteObjectsCommand({
+        Bucket: MEDIA_BUCKET, Delete: { Objects: objects, Quiet: true }
+      }));
+      if (deleted.Errors?.length) throw new Error('Some stored media objects could not be deleted.');
+    }
+    continuationToken = page.IsTruncated ? page.NextContinuationToken : undefined;
+  } while (continuationToken);
+}
+
 app.delete('/api/account', auth, asyncRoute(async (req, res) => {
   const client = await pool.connect();
+  let neonIdentityId = null;
   try {
     await client.query('BEGIN');
+    const identity = await client.query('SELECT neon_auth_user_id FROM users WHERE id=$1 FOR UPDATE', [req.user.id]);
+    neonIdentityId = identity.rows[0]?.neon_auth_user_id || null;
+
+    const stores = await client.query(
+      'SELECT id,bizname,country,currency FROM stores WHERE owner_id=$1 ORDER BY created_at',
+      [req.user.id]
+    );
+    const businesses = await client.query(
+      'SELECT name,currency,country,plan FROM businesses WHERE owner_id=$1 AND is_default=true',
+      [req.user.id]
+    );
+    const subscriptions = await client.query(
+      'SELECT s.plan,s.status,s.currency,s.cycle,s.current_period_end,s.cancel_at_period_end,s.updated_at FROM subscriptions s JOIN stores st ON st.id=s.store_id WHERE st.owner_id=$1 ORDER BY s.updated_at DESC',
+      [req.user.id]
+    );
+    const payments = await client.query(
+      'SELECT amount,currency,status,purpose,created_at,paid_at FROM payments WHERE user_id=$1 ORDER BY created_at',
+      [req.user.id]
+    );
+    const accountData = await client.query(
+      "SELECT data->'features'->'branches' AS branches FROM account_data WHERE user_id=$1",
+      [req.user.id]
+    );
+    const branches = Array.isArray(accountData.rows[0]?.branches)
+      ? accountData.rows[0].branches.map(branch => ({
+          name: cleanText(typeof branch === 'string' ? branch : branch?.name, 120)
+        })).filter(branch => branch.name)
+      : [];
+
+    const snapshot = {
+      businesses: businesses.rows.map(row => ({
+        name: cleanText(row.name, 140), currency: cleanText(row.currency, 8),
+        country: cleanText(row.country, 80), plan: cleanText(row.plan, 40)
+      })),
+      stores: stores.rows.map(row => ({
+        name: cleanText(row.bizname, 140), currency: cleanText(row.currency, 8),
+        country: cleanText(row.country, 80)
+      })),
+      branches,
+      subscriptionHistory: subscriptions.rows,
+      paymentHistory: payments.rows
+    };
+    const surveyReasons = Array.isArray(req.body?.survey)
+      ? req.body.survey.map(item => cleanText(item, 120)).filter(Boolean).slice(0, 10)
+      : [];
+    const survey = { reasons: surveyReasons, note: cleanText(req.body?.note, 200) || null };
+
+    // The audit row intentionally excludes login email, password, PIN and contact data.
+    await client.query(
+      'INSERT INTO account_deletions(user_id,store_id,email,snapshot,survey) VALUES($1,$2,NULL,$3::jsonb,$4::jsonb)',
+      [req.user.id, stores.rows[0]?.id || null, JSON.stringify(snapshot), JSON.stringify(survey)]
+    );
+
+    // These tables have NO ACTION foreign keys and must be removed before stores/users.
+    await client.query('DELETE FROM review_requests WHERE user_id=$1', [req.user.id]);
+    await client.query('DELETE FROM payments WHERE user_id=$1', [req.user.id]);
+    await client.query('DELETE FROM stores WHERE owner_id=$1', [req.user.id]);
     await client.query('DELETE FROM users WHERE id=$1', [req.user.id]);
     await client.query('COMMIT');
-    res.clearCookie(COOKIE_NAME, { path: '/', ...(ENV.SESSION_COOKIE_DOMAIN ? { domain: ENV.SESSION_COOKIE_DOMAIN } : {}) });
-    res.json({ ok: true });
-  } catch (e) { await client.query('ROLLBACK'); throw e; }
-  finally { client.release(); }
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+
+  let mediaCleanupComplete = true;
+  try {
+    await deleteMediaPrefix(req.user.id + '/');
+    if (neonIdentityId) await deleteMediaPrefix('profiles/' + neonIdentityId + '/');
+  } catch (error) {
+    mediaCleanupComplete = false;
+    console.error('[account] Stored media cleanup failed after account deletion:', error.message);
+  }
+  res.clearCookie(COOKIE_NAME, { path: '/', ...(ENV.SESSION_COOKIE_DOMAIN ? { domain: ENV.SESSION_COOKIE_DOMAIN } : {}) });
+  res.json({ ok: true, mediaCleanupComplete });
 }));
 app.patch('/api/account/business', auth, asyncRoute(async (req, res) => {
   const name = cleanText(req.body.name, 140);

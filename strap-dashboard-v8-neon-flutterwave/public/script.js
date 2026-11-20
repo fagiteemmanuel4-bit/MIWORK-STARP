@@ -125,21 +125,57 @@
       } catch (e) { return { ok: false, msg: e.message || 'The verification code is invalid.' }; }
     },
     async createAccount(data) {
+      let uploadedProfileKey = null;
       try {
-        const photoUrl = typeof data.photo === 'string' ? data.photo : (typeof data.photoUrl === 'string' ? data.photoUrl : null);
-        const result = await window.StrapAPI.request('/api/auth/register', { method: 'POST', body: JSON.stringify({
-          email: data.email, password: data.password, name: data.name, bizname: data.bizname,
-          currency: data.currency || 'NGN', bcountry: data.bcountry || data.country,
-          photoUrl, ...data
-        }), headers: { 'X-Turnstile-Token': data.turnstileToken || '' } });
-        // Registration already returns the canonical user record. Avoid a second
-        // authenticated round-trip here: if /api/auth/me briefly fails after the
-        // account transaction commits, the UI must not report a successful signup
-        // as failed or invite the user to submit the setup form again.
+        let photoUrl = typeof data.photoUrl === 'string' ? data.photoUrl : null;
+        const photoFile = data.photo && typeof data.photo.arrayBuffer === 'function' &&
+          typeof data.photo.type === 'string' && Number.isFinite(data.photo.size) ? data.photo : null;
+
+        if (photoFile) {
+          const presign = await window.StrapAPI.request('/api/media/profile/presign', {
+            method: 'POST',
+            body: JSON.stringify({ contentType: photoFile.type, size: photoFile.size })
+          });
+          const upload = await fetch(presign.uploadUrl, {
+            method: 'PUT',
+            headers: presign.headers || { 'Content-Type': photoFile.type },
+            body: photoFile
+          });
+          if (!upload.ok) throw new Error('Your profile picture could not be uploaded. Try again or choose Skip for now.');
+          uploadedProfileKey = presign.key;
+          photoUrl = presign.publicUrl;
+        }
+
+        const { password: _password, photo: _photo, turnstileToken: _turnstileToken, ...profileData } = data;
+        const result = await window.StrapAPI.request('/api/auth/register', {
+          method: 'POST',
+          body: JSON.stringify({
+            ...profileData,
+            name: data.name,
+            bizname: data.bizname,
+            currency: data.currency || 'NGN',
+            bcountry: data.bcountry || data.country,
+            photoUrl
+          }),
+          headers: { 'X-Turnstile-Token': data.turnstileToken || '' }
+        });
+        // Registration returns the canonical user record; avoid a second
+        // authenticated round-trip after the account transaction has committed.
         if (!result?.user) throw new Error('Your account was created, but we could not load its profile. Please sign in.');
         window.StrapAPI.setUser(result.user);
         return { ok: true, user: result.user };
-      } catch (e) { return { ok: false, msg: e.message }; }
+      } catch (e) {
+        if (uploadedProfileKey) {
+          try {
+            await window.StrapAPI.request('/api/media/profile/object', {
+              method: 'DELETE', body: JSON.stringify({ key: uploadedProfileKey })
+            });
+          } catch (cleanupError) {
+            console.warn('Strap could not remove an unlinked profile image:', cleanupError);
+          }
+        }
+        return { ok: false, msg: e.message || 'Your workspace could not be created. Please try again.' };
+      }
     },
     async subscribe({ amount }) {
       try {
@@ -186,7 +222,7 @@
   const sel = m => v => v ? '' : m;
   const txt = (m, n = 2) => v => v.trim().length >= n ? '' : m;
   const score = p => (p.length >= 8) + (/[a-z]/i.test(p) && /\d/.test(p)) + (p.length >= 12) + (/[^A-Za-z0-9]/.test(p) && /[A-Z]/.test(p));
-  const pwErr = p => p.length < 10 ? 'Use at least 8 characters.' : (!/[a-z]/i.test(p) || !/\d/.test(p)) ? 'Include a letter and a number.' : '';
+  const pwErr = p => p.length < 10 ? 'Use at least 10 characters.' : (!/[a-z]/i.test(p) || !/\d/.test(p)) ? 'Include a letter and a number.' : '';
   const dobErr = v => {
     if (!v) return 'Enter your date of birth.';
     const [y, m, d] = v.split('-').map(Number), n = new Date();
