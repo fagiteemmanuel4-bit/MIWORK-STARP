@@ -509,7 +509,6 @@ window.StrapFeatures = (() => {
         await cover('Sending your request', async () => { const r = await api.requestReview({ note: tx.value.trim(), email: em.value.trim(), phone: $('#rv-p', g).value.trim() }); S.account = { status: 'review', ticket: r.ticket, at: Date.now() }; save(); notify('account', 'Review requested', `We’re reviewing your account. Reference ${r.ticket}.`); render(); }); K.fx('ok');
       }
     });
-    const A2 = { agree: false };
     const render = () => { if (S.account.status === 'active') { g.remove(); document.body.classList.remove('pm-open'); toast('Your account is active again'); return; } S.account.status === 'suspended' ? suspended() : review(); };
     render();
   }

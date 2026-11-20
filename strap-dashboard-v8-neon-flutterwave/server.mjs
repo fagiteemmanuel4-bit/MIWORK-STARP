@@ -149,7 +149,7 @@ async function auth(req, res, next) {
     if (!identity) return fail(res, 401, 'Your Neon Auth session is invalid. Please sign in again.');
     if (!identity.emailVerified) return fail(res, 403, 'Verify your email with Neon Auth before accessing Strap.');
     let result = await pool.query(
-      `SELECT u.id,u.email,u.full_name,u.photo_url,u.created_at,
+      `SELECT u.id,u.email,u.full_name,u.photo_url,u.created_at,u.status,u.review_ticket,
               b.id AS business_id,b.name AS business_name,b.currency,b.country,b.plan,b.profile AS business_profile
        FROM users u LEFT JOIN businesses b ON b.owner_id=u.id AND b.is_default=true
        WHERE u.neon_auth_user_id=$1 AND u.disabled_at IS NULL LIMIT 1`,
@@ -157,7 +157,7 @@ async function auth(req, res, next) {
     );
     if (!result.rowCount) {
       result = await pool.query(
-        `SELECT u.id,u.email,u.full_name,u.photo_url,u.created_at,
+        `SELECT u.id,u.email,u.full_name,u.photo_url,u.created_at,u.status,u.review_ticket,
                 b.id AS business_id,b.name AS business_name,b.currency,b.country,b.plan,b.profile AS business_profile
          FROM users u LEFT JOIN businesses b ON b.owner_id=u.id AND b.is_default=true
          WHERE lower(u.email)=$1 AND u.neon_auth_user_id IS NULL AND u.disabled_at IS NULL LIMIT 1`,
@@ -170,6 +170,19 @@ async function auth(req, res, next) {
     }
     if (!result.rowCount) return fail(res, 401, 'Your Strap profile is not linked to this Neon Auth account. Please sign in again.');
     req.user = result.rows[0];
+    const status = req.user.status || 'active';
+    const restrictedWrite = status !== 'active' &&
+      req.method !== 'GET' && req.method !== 'HEAD' &&
+      !(req.method === 'POST' && req.path === '/api/account/review') &&
+      !(req.method === 'DELETE' && req.path === '/api/account');
+    if (restrictedWrite) {
+      return res.status(423).json({
+        ok: false, code: 'ACCOUNT_RESTRICTED',
+        message: status === 'suspended'
+          ? 'This account is suspended. You can request a review or delete the account.'
+          : 'This account is under review. You can check its status or delete the account.'
+      });
+    }
     next();
   } catch (error) { next(error); }
 }
@@ -196,7 +209,8 @@ function profileIsComplete(user) {
 function publicUser(user) {
   return { id: user.id, email: user.email, name: user.full_name, photoUrl: user.photo_url || null,
     bizname: user.business_name || '', currency: user.currency || CURRENCY, country: user.country || '',
-    profile: user.business_profile || {}, profileComplete: profileIsComplete(user) };
+    profile: user.business_profile || {}, profileComplete: profileIsComplete(user),
+    status: user.status || 'active', reviewTicket: user.review_ticket || null };
 }
 
 app.get('/api/config', (_req, res) => res.json({
@@ -220,8 +234,12 @@ app.post('/api/auth/register', neonIdentity, asyncRoute(async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    let found = await client.query('SELECT id,email,full_name,photo_url,neon_auth_user_id FROM users WHERE neon_auth_user_id=$1 LIMIT 1', [req.neonIdentity.id]);
-    if (!found.rowCount) found = await client.query('SELECT id,email,full_name,photo_url,neon_auth_user_id FROM users WHERE lower(email)=$1 LIMIT 1', [email]);
+    let found = await client.query('SELECT id,email,full_name,photo_url,neon_auth_user_id,status FROM users WHERE neon_auth_user_id=$1 LIMIT 1', [req.neonIdentity.id]);
+    if (!found.rowCount) found = await client.query('SELECT id,email,full_name,photo_url,neon_auth_user_id,status FROM users WHERE lower(email)=$1 LIMIT 1', [email]);
+    if (found.rowCount && (found.rows[0].status || 'active') !== 'active') {
+      await client.query('ROLLBACK');
+      return res.status(423).json({ ok: false, code: 'ACCOUNT_RESTRICTED', message: 'This account is restricted. Request a review or delete the account to continue.' });
+    }
     if (found.rowCount && found.rows[0].neon_auth_user_id && found.rows[0].neon_auth_user_id !== req.neonIdentity.id) {
       await client.query('ROLLBACK');
       return fail(res, 409, 'This email is already linked to another authentication account. Sign in with the original account.');
@@ -276,12 +294,12 @@ app.post('/api/auth/register', neonIdentity, asyncRoute(async (req, res) => {
 app.post('/api/auth/sync', neonIdentity, asyncRoute(async (req, res) => {
   if (!req.neonIdentity.emailVerified) return fail(res, 403, 'Verify your email with Neon Auth before signing in.');
   let result = await pool.query(
-    'SELECT u.id,u.email,u.full_name,u.photo_url,u.neon_auth_user_id,u.created_at,b.name AS business_name,b.currency,b.country,b.profile AS business_profile FROM users u LEFT JOIN businesses b ON b.owner_id=u.id AND b.is_default=true WHERE u.neon_auth_user_id=$1 LIMIT 1',
+    'SELECT u.id,u.email,u.full_name,u.photo_url,u.neon_auth_user_id,u.created_at,u.status,u.review_ticket,b.name AS business_name,b.currency,b.country,b.profile AS business_profile FROM users u LEFT JOIN businesses b ON b.owner_id=u.id AND b.is_default=true WHERE u.neon_auth_user_id=$1 LIMIT 1',
     [req.neonIdentity.id]
   );
   if (!result.rowCount) {
     result = await pool.query(
-      'SELECT u.id,u.email,u.full_name,u.photo_url,u.neon_auth_user_id,u.created_at,b.name AS business_name,b.currency,b.country,b.profile AS business_profile FROM users u LEFT JOIN businesses b ON b.owner_id=u.id AND b.is_default=true WHERE lower(u.email)=$1 LIMIT 1',
+      'SELECT u.id,u.email,u.full_name,u.photo_url,u.neon_auth_user_id,u.created_at,u.status,u.review_ticket,b.name AS business_name,b.currency,b.country,b.profile AS business_profile FROM users u LEFT JOIN businesses b ON b.owner_id=u.id AND b.is_default=true WHERE lower(u.email)=$1 LIMIT 1',
       [req.neonIdentity.email]
     );
   }
@@ -373,6 +391,13 @@ app.delete('/api/media/object', auth, asyncRoute(async (req, res) => {
 }));
 app.post('/api/media/profile/presign', neonIdentity, asyncRoute(async (req, res) => {
   if (!req.neonIdentity.emailVerified) return fail(res, 403, 'Verify your email before uploading a profile picture.');
+  const existingAccount = await pool.query(
+    'SELECT status FROM users WHERE neon_auth_user_id=$1 AND disabled_at IS NULL LIMIT 1',
+    [req.neonIdentity.id]
+  );
+  if (existingAccount.rowCount && (existingAccount.rows[0].status || 'active') !== 'active') {
+    return res.status(423).json({ ok: false, code: 'ACCOUNT_RESTRICTED', message: 'This account is restricted and cannot upload new profile images.' });
+  }
   const contentType = String(req.body?.contentType || '').toLowerCase().trim();
   const extension = PUBLIC_IMAGE_TYPES[contentType];
   const size = Number(req.body?.size);
@@ -545,6 +570,58 @@ app.patch('/api/account/business', auth, asyncRoute(async (req, res) => {
   await pool.query('UPDATE businesses SET name=$2,updated_at=now() WHERE owner_id=$1 AND is_default=true', [req.user.id, name]);
   res.json({ ok: true });
 }));
+app.get('/api/account/status', auth, asyncRoute(async (req, res) => {
+  let ticket = req.user.review_ticket || null, at = null, reason = null;
+  if (ticket) {
+    const latest = await pool.query(
+      'SELECT ticket,note,created_at FROM review_requests WHERE user_id=$1 AND ticket=$2 ORDER BY created_at DESC LIMIT 1',
+      [req.user.id, ticket]
+    );
+    if (latest.rowCount) {
+      ticket = latest.rows[0].ticket;
+      at = latest.rows[0].created_at;
+      reason = latest.rows[0].note || null;
+    }
+  }
+  res.json({ ok: true, status: req.user.status || 'active', ticket, at, reason });
+}));
+app.post('/api/account/review', auth, asyncRoute(async (req, res) => {
+  const note = cleanText(req.body?.note, 600);
+  const email = emailNorm(req.body?.email);
+  const phone = cleanText(req.body?.phone, 40);
+  if (note.length < 15) return fail(res, 400, 'Please explain what happened in at least 15 characters.');
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) return fail(res, 400, 'Enter a valid contact email address.');
+  if (phone && phone.replace(/\D/g, '').length < 7) return fail(res, 400, 'Enter a valid phone number.');
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const user = await client.query('SELECT status,review_ticket FROM users WHERE id=$1 FOR UPDATE', [req.user.id]);
+    if (!user.rowCount) { await client.query('ROLLBACK'); return fail(res, 404, 'Account not found.'); }
+    const status = user.rows[0].status || 'active';
+    if (status === 'active') { await client.query('ROLLBACK'); return fail(res, 409, 'Your account is active. A review request is not needed.'); }
+    if (status === 'review' && user.rows[0].review_ticket) {
+      const existing = await client.query(
+        'SELECT ticket,created_at FROM review_requests WHERE user_id=$1 AND ticket=$2 ORDER BY created_at DESC LIMIT 1',
+        [req.user.id, user.rows[0].review_ticket]
+      );
+      await client.query('COMMIT');
+      return res.json({ ok: true, status: 'review', ticket: existing.rows[0]?.ticket || user.rows[0].review_ticket, at: existing.rows[0]?.created_at || null });
+    }
+
+    const ticket = 'RV-' + crypto.randomBytes(4).toString('hex').toUpperCase();
+    const inserted = await client.query(
+      'INSERT INTO review_requests(user_id,ticket,note,email,phone) VALUES($1,$2,$3,$4,$5) RETURNING created_at',
+      [req.user.id, ticket, note, email, phone || null]
+    );
+    await client.query("UPDATE users SET status='review',review_ticket=$2,updated_at=now() WHERE id=$1", [req.user.id, ticket]);
+    await client.query('COMMIT');
+    res.status(201).json({ ok: true, status: 'review', ticket, at: inserted.rows[0].created_at });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally { client.release(); }
+}));
 
 
 // Public storefront reads and order writes. The same Neon account document powers
@@ -564,7 +641,8 @@ async function loadPublicStore(slug, executor = pool, lock = false) {
   if (!publicSlugOk(slug)) return null;
   const result = await executor.query(
     "SELECT a.user_id,a.data->'onlineStore' AS config,a.data->'features' AS features,b.currency " +
-    "FROM account_data a JOIN businesses b ON b.owner_id=a.user_id AND b.is_default=true " +
+    "FROM account_data a JOIN users u ON u.id=a.user_id AND u.status='active' AND u.disabled_at IS NULL " +
+    "JOIN businesses b ON b.owner_id=a.user_id AND b.is_default=true " +
     "WHERE a.data #>> '{onlineStore,domain,slug}'=$1 AND a.data #>> '{onlineStore,status}'='live' LIMIT 1" +
     (lock ? ' FOR UPDATE OF a' : ''),
     [slug]
@@ -682,7 +760,7 @@ app.post('/api/public/store/:slug/orders', asyncRoute(async (req, res) => {
   try {
     await client.query('BEGIN');
     const result = await client.query(
-      "SELECT a.user_id,a.data FROM account_data a WHERE a.data #>> '{onlineStore,domain,slug}'=$1 FOR UPDATE",
+      "SELECT a.user_id,a.data FROM account_data a JOIN users u ON u.id=a.user_id AND u.status='active' AND u.disabled_at IS NULL WHERE a.data #>> '{onlineStore,domain,slug}'=$1 FOR UPDATE OF a",
       [slug]
     );
     if (!result.rowCount) { await client.query('ROLLBACK'); return fail(res, 404, 'This storefront is not available.'); }
@@ -752,7 +830,7 @@ app.get('/robots.txt', asyncRoute(async (_req,res) => {
   res.type('text/plain').send('User-agent: *\nAllow: /store/\nDisallow: /dashboard\nDisallow: /api/\nSitemap: ' + APP_URL + '/sitemap.xml\n');
 }));
 app.get('/sitemap.xml', asyncRoute(async (_req,res) => {
-  const result = await pool.query("SELECT data->'onlineStore' AS config,data->'features' AS features FROM account_data WHERE data->'onlineStore' IS NOT NULL");
+  const result = await pool.query("SELECT a.data->'onlineStore' AS config,a.data->'features' AS features FROM account_data a JOIN users u ON u.id=a.user_id AND u.status='active' AND u.disabled_at IS NULL WHERE a.data->'onlineStore' IS NOT NULL");
   const urls = [];
   for (const row of result.rows) {
     const c = row.config || {}, slug = c.domain?.slug;

@@ -38,14 +38,16 @@
       D = window.StrapAPI.user;
       await Promise.all([StrapStore.hydrate(), StrapFeatures.hydrate()]);
 
-      const seed = {};
-      if (!window.StrapAPI.data.get('store')) seed.store = StrapStore.state;
-      if (!window.StrapAPI.data.get('features')) seed.features = StrapFeatures.state;
-      if (Object.keys(seed).length) await window.StrapAPI.data.setMany(seed);
-      if (!StrapStore.getReceiptRaw()) {
-        await StrapStore.setReceiptRaw(StrapReceipt.defaults(D.bizname || 'My Store'));
+      if ((D.status || 'active') === 'active') {
+        const seed = {};
+        if (!window.StrapAPI.data.get('store')) seed.store = StrapStore.state;
+        if (!window.StrapAPI.data.get('features')) seed.features = StrapFeatures.state;
+        if (Object.keys(seed).length) await window.StrapAPI.data.setMany(seed);
+        if (!StrapStore.getReceiptRaw()) {
+          await StrapStore.setReceiptRaw(StrapReceipt.defaults(D.bizname || 'My Store'));
+        }
+        await window.StrapAPI.data.flush();
       }
-      await window.StrapAPI.data.flush();
 
       const params = new URLSearchParams(location.search);
       if (params.get('payment') === 'verify') {

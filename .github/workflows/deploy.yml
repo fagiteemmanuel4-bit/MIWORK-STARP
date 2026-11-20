@@ -63,8 +63,8 @@ jobs:
           echo "Checking dashboard HTML route (including Cloudflare's clean-URL redirect)"
           dashboard_result="$(curl --fail --show-error --silent --output /tmp/strap-dashboard.html --write-out "%{http_code} %{url_effective}" "$PREVIEW_URL/dashboard")"
           echo "Dashboard response: $dashboard_result"
-          grep -q 'src="/dashboard.js' /tmp/strap-dashboard.html
-          grep -q 'src="/features.js?v=20261120-release2' /tmp/strap-dashboard.html
+          grep -q 'src="/dashboard.js?v=20261120-release3' /tmp/strap-dashboard.html
+          grep -q 'src="/features.js?v=20261120-release3' /tmp/strap-dashboard.html
           echo "Checking dashboard feature asset"
           curl --fail --show-error --silent "$PREVIEW_URL/features.js" -o /tmp/strap-features.js
           grep -q "S.notifs = Array.isArray" /tmp/strap-features.js
@@ -93,6 +93,10 @@ jobs:
           status="$(curl --silent --output /dev/null --write-out "%{http_code}" -X DELETE -H 'Content-Type: application/json' -d '{}' "$PREVIEW_URL/api/media/profile/object")"
           test "$status" = "401"
           status="$(curl --silent --output /dev/null --write-out "%{http_code}" -X DELETE -H 'Content-Type: application/json' -d '{}' "$PREVIEW_URL/api/account")"
+          test "$status" = "401"
+          status="$(curl --silent --output /dev/null --write-out "%{http_code}" "$PREVIEW_URL/api/account/status")"
+          test "$status" = "401"
+          status="$(curl --silent --output /dev/null --write-out "%{http_code}" -X POST -H 'Content-Type: application/json' -d '{}' "$PREVIEW_URL/api/account/review")"
           test "$status" = "401"
           curl --fail --show-error --silent "$PREVIEW_URL/products.js" -o /tmp/strap-products.js
           grep -q "/api/media/presign" /tmp/strap-products.js
