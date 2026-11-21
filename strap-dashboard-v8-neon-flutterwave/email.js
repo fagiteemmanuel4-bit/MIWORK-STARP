@@ -94,7 +94,7 @@ export async function handleNeonAuthEmailWebhook(request, env) {
   }
 
   if (payload.event_type !== 'send.otp') {
-    return Response.json({ ok: true, ignored: true });
+    return Response.json({ success: true, ignored: true });
   }
 
   const email = String(payload.user?.email || '').trim().toLowerCase();
@@ -162,7 +162,7 @@ export async function handleNeonAuthEmailWebhook(request, env) {
         accessToken: config.privateKey,
         template_params: templateParams
       }),
-      signal: AbortSignal.timeout(4000)
+      signal: AbortSignal.timeout(8000)
     });
   } catch (error) {
     console.error('[neon-email] EmailJS request failed:', error.name || 'NetworkError');
@@ -175,5 +175,5 @@ export async function handleNeonAuthEmailWebhook(request, env) {
     return Response.json({ ok: false, message: 'Email provider could not deliver the verification email.' }, { status: 502 });
   }
 
-  return Response.json({ ok: true, provider: 'EmailJS', event_id: payload.event_id });
+  return Response.json({ success: true, provider: 'EmailJS', event_id: payload.event_id });
 }

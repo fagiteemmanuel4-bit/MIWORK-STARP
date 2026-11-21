@@ -92,6 +92,13 @@ export default {
       return new Response(null, { status: 404, headers: { "Cache-Control": "no-store" } });
     }
 
+    // Serve the root entry explicitly rather than relying on implicit asset index resolution.
+    if (url.pathname === "/") {
+      const indexUrl = new URL(request.url);
+      indexUrl.pathname = "/index.html";
+      return env.ASSETS.fetch(new Request(indexUrl, request));
+    }
+
     // Route the canonical dashboard URL to its actual HTML asset. This avoids
     // depending on implicit clean-URL handling for /dashboard on mobile browsers.
     if (url.pathname === "/dashboard" || url.pathname === "/dashboard/") {
@@ -138,8 +145,19 @@ export default {
         query_timeout: 12000,
         ssl: { rejectUnauthorized: false }
       });
-      await dbClient.connect();
-      return await withDatabaseClient(dbClient, () => handleAsNodeRequest(8787, request));
+      let connected = false;
+      try {
+        await dbClient.connect();
+        connected = true;
+        return await withDatabaseClient(dbClient, () => handleAsNodeRequest(8787, request));
+      } finally {
+        if (connected) {
+          try { await dbClient.end(); }
+          catch (closeError) {
+            console.warn("Strap Worker database client close failed:", closeError?.message || closeError);
+          }
+        }
+      }
     } catch (error) {
       console.error("Strap Worker request failed:", error);
       return Response.json({ ok: false, message: env.STRAP_DEBUG === "true" ? String(error?.stack || error?.message || error) : "Strap is temporarily unavailable. Please try again." }, { status: 503 });

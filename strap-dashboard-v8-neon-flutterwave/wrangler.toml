@@ -20,8 +20,8 @@ APP_URL = "https://strap-preview.strap-preview.workers.dev"
 DEFAULT_CURRENCY = "NGN"
 STRAP_TURNSTILE_SITEKEY = "0x4AAAAAAGIY0URD6s_Mg1m1"
 TRUST_PROXY = "1"
-NEON_AUTH_BASE_URL = "https://ep-old-night-bdy63bd2.neonauth.c-8.us-east-2.aws.neon.tech/neondb/auth"
-NEON_AUTH_JWKS_URL = "https://ep-old-night-bdy63bd2.neonauth.c-8.us-east-2.aws.neon.tech/neondb/auth/.well-known/jwks.json"
+NEON_AUTH_BASE_URL = "https://ep-young-breeze-bdbj7cwf.neonauth.c-8.us-east-2.aws.neon.tech/neondb/auth"
+NEON_AUTH_JWKS_URL = "https://ep-young-breeze-bdbj7cwf.neonauth.c-8.us-east-2.aws.neon.tech/neondb/auth/.well-known/jwks.json"
 NEON_S3_ENDPOINT = "https://br-restless-feather-bd95sg5s.storage.c-8.us-east-2.aws.neon.tech"
 NEON_S3_REGION = "us-east-2"
 NEON_S3_BUCKET = "strap-media"
@@ -46,3 +46,20 @@ namespace_id = "814203"
 [ratelimits.simple]
 limit = 12
 period = 60
+
+
+[observability]
+enabled = true
+head_sampling_rate = 1.0
+redact_query_string = true
+
+[observability.logs]
+enabled = true
+invocation_logs = true
+head_sampling_rate = 1.0
+persist = true
+
+[observability.traces]
+enabled = true
+head_sampling_rate = 0.1
+persist = true

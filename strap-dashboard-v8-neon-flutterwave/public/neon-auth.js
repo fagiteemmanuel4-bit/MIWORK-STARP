@@ -1,6 +1,6 @@
 import { createAuthClient } from "https://esm.sh/@neondatabase/auth@0.7.0-beta?bundle";
 
-const NEON_AUTH_URL = "https://ep-old-night-bdy63bd2.neonauth.c-8.us-east-2.aws.neon.tech/neondb/auth";
+const NEON_AUTH_URL = "https://ep-young-breeze-bdbj7cwf.neonauth.c-8.us-east-2.aws.neon.tech/neondb/auth";
 
 try {
   const client = createAuthClient(NEON_AUTH_URL);
