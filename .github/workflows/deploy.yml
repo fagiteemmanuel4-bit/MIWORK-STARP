@@ -78,6 +78,9 @@ jobs:
           test "$status" = "404"
           curl --fail --show-error --silent "$PREVIEW_URL/api/config" -o /tmp/strap-api-config.json
           grep -q '"emailProvider":"Neon Auth"' /tmp/strap-api-config.json
+          echo "Checking Neon Auth webhook rejects unsigned events"
+          status="$(curl --silent --output /dev/null --write-out "%{http_code}" -X POST -H 'Content-Type: application/json' -d '{"event_id":"smoke-test","event_type":"send.otp"}' "$PREVIEW_URL/api/webhooks/neon-auth")"
+          test "$status" = "401"
           curl --fail --show-error --silent "$PREVIEW_URL/script.js" -o /tmp/strap-script.js
           grep -q '0x4AAAAAAGIY0URD6s_Mg1m1' /tmp/strap-script.js
           grep -q '/api/media/profile/presign' /tmp/strap-script.js
